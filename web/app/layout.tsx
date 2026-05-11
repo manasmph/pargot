@@ -1,6 +1,8 @@
 import { Public_Sans } from 'next/font/google';
 import localFont from 'next/font/local';
 import { headers } from 'next/headers';
+import { Analytics } from '@vercel/analytics/next';
+import { SpeedInsights } from '@vercel/speed-insights/next';
 import { SocratiqLogo } from '@/components/app/socratiq-logo';
 import { ThemeProvider } from '@/components/app/theme-provider';
 import { ThemeToggle } from '@/components/app/theme-toggle';
@@ -83,6 +85,13 @@ export default async function RootLayout({ children }: RootLayoutProps) {
             <ThemeToggle className="transition-transform delay-150 duration-300 md:translate-y-20 md:group-hover:translate-y-0" />
           </div>
         </ThemeProvider>
+
+        {/* Vercel Analytics — page views, referrers, custom events.
+            Vercel Speed Insights — Core Web Vitals (LCP, FID/INP, CLS).
+            Both are no-ops in development and only ship when deployed on Vercel.
+            Activate them at vercel.com → project → Analytics / Speed Insights tab. */}
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );
