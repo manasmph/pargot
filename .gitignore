@@ -1,0 +1,42 @@
+# ── Secrets ──────────────────────────────────────────────────────────────
+# Never commit env files. Each app keeps its own .env*.example for reference.
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# ── Python (agent/) ──────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Node (web/) ──────────────────────────────────────────────────────────
+# (web/.gitignore covers the Next.js specifics; these are belt-and-suspenders
+# in case the root is opened first.)
+node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+.pnpm-debug.log*
+
+# ── Deploy platform metadata ─────────────────────────────────────────────
+.vercel
+.railway
+
+# ── Editor / OS ──────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Claude scratch (project-local plans, etc.) ──────────────────────────
+.claude/
