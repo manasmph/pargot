@@ -18,11 +18,18 @@ const LIVEKIT_URL = process.env.LIVEKIT_URL;
 export const revalidate = 0;
 
 export async function POST(req: Request) {
-  if (process.env.NODE_ENV !== 'development') {
-    throw new Error(
-      'THIS API ROUTE IS INSECURE. DO NOT USE THIS ROUTE IN PRODUCTION WITHOUT AN AUTHENTICATION LAYER.'
-    );
-  }
+  // ⚠ SECURITY NOTE
+  // This endpoint mints a LiveKit JWT for *any* caller. Anyone with the URL
+  // can join voice rooms and burn LiveKit quota — there is no auth gate.
+  //
+  // For SocratiQ's current hobby deploy this is acceptable (free-tier LiveKit
+  // caps abuse damage at 25,000 minutes/month, and the room is single-user
+  // anyway). Before any serious launch, wrap this in NextAuth / Clerk /
+  // a shared bearer secret and re-enable the production guard:
+  //
+  //   if (process.env.NODE_ENV !== 'development' && !isAuthenticated(req)) {
+  //     return new Response('Unauthorized', { status: 401 });
+  //   }
 
   try {
     if (LIVEKIT_URL === undefined) {
