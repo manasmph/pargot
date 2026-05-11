@@ -11,6 +11,12 @@ interface SupportPanelProps {
   isLoading: boolean;
   error?: string | null;
   errorCode?: CoachErrorCode | null;
+  /**
+   * True when the current `state` was hydrated from a schema-fail salvage
+   * on the server. We render a small "tentative" indicator so the user
+   * knows the framework is a best-effort guess (Phase 2.3).
+   */
+  isPartial?: boolean;
   className?: string;
 }
 
@@ -21,8 +27,18 @@ interface SupportPanelProps {
  *  - Loaded state: framework header + stepper + per-turn feedback chips.
  *  - Error state: prominent banner at the top of the body. Prior stepper
  *    (if any) stays visible underneath so the user keeps their context.
+ *  - Tentative state: yellow badge in the header reading "Tentative" plus
+ *    a soft yellow border around the framework name, signalling that the
+ *    panel will refine itself on the next turn.
  */
-export function SupportPanel({ state, isLoading, error, errorCode, className }: SupportPanelProps) {
+export function SupportPanel({
+  state,
+  isLoading,
+  error,
+  errorCode,
+  isPartial = false,
+  className,
+}: SupportPanelProps) {
   const hasState = state !== null;
   const hasError = !!error;
 
@@ -52,6 +68,11 @@ export function SupportPanel({ state, isLoading, error, errorCode, className }: 
           )}
         />
         <span className="text-foreground text-sm font-semibold">Interview Coach</span>
+        {isPartial && hasState && (
+          <span className="ml-1.5 inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[9px] font-semibold tracking-wide text-amber-400 uppercase">
+            Tentative
+          </span>
+        )}
         {hasState && (
           <span className="text-muted-foreground ml-auto text-[11px] tracking-wide uppercase">
             {state.framework.name}
@@ -80,16 +101,25 @@ export function SupportPanel({ state, isLoading, error, errorCode, className }: 
 
         {hasState && (
           <div className={cn('space-y-4', hasError && 'mt-3')}>
-            <div>
+            <div
+              className={cn(
+                isPartial && 'rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2'
+              )}
+            >
               <p className="text-muted-foreground text-[11px] tracking-wide uppercase">
                 {state.framework.questionType}
               </p>
               <h3 className="text-foreground mt-0.5 text-base font-semibold tracking-tight">
                 {state.framework.name}
               </h3>
+              {isPartial && (
+                <p className="text-muted-foreground mt-1 text-[11px] leading-snug">
+                  Framework picked from a partial response. Cues will tick in on the next turn.
+                </p>
+              )}
             </div>
 
-            <FrameworkStepper stages={state.stages} />
+            <FrameworkStepper stages={state.stages} isPending={isLoading} />
 
             {state.feedback.length > 0 && (
               <div className="border-border/60 space-y-2 border-t pt-3">

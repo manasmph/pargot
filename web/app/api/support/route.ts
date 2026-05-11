@@ -24,7 +24,7 @@ import type {
   CoachUpdate,
   FrameworkId,
 } from '@/lib/coach-types';
-import { FRAMEWORK_IDS, getValidCueIds, getValidStageIds } from '@/lib/frameworks';
+import { FRAMEWORKS, FRAMEWORK_IDS, getValidCueIds, getValidStageIds } from '@/lib/frameworks';
 import { buildSupportSystemPrompt } from '@/lib/support-prompt';
 
 export const runtime = 'nodejs';
@@ -299,6 +299,36 @@ function extractJsonFromText(text: string): string {
 }
 
 /**
+ * Best-effort framework_id extraction from a parsed-but-schema-invalid response.
+ * Used by the partial-response salvage path: when Zod rejects the full
+ * CoachUpdate but the model at least picked a valid framework, we'd rather
+ * show the user a tentative stepper than a blank panel.
+ */
+function salvageFrameworkId(parsed: unknown): FrameworkId | null {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const candidate = (parsed as { framework_id?: unknown }).framework_id;
+  if (typeof candidate !== 'string') return null;
+  if (!(FRAMEWORK_IDS as readonly string[]).includes(candidate)) return null;
+  return candidate as FrameworkId;
+}
+
+/**
+ * Construct a minimal `CoachUpdate` for the given framework: current stage =
+ * first stage of the framework, no cues ticked, no feedback. Used when the
+ * model picked a framework but we couldn't trust the rest of its output.
+ */
+function buildTentativeUpdate(frameworkId: FrameworkId): CoachUpdate {
+  const fw = FRAMEWORKS[frameworkId];
+  return {
+    framework_id: frameworkId,
+    current_stage_id: fw.stages[0].id,
+    completed_stage_ids: [],
+    done_cue_ids: [],
+    feedback: [],
+  };
+}
+
+/**
  * Mark a model unavailable and schedule a background probe to test
  * whether it has recovered. Probe interval is category-driven so that
  * brief 503 overloads don't get stuck behind a 2-minute quota timer.
@@ -549,6 +579,25 @@ export async function POST(req: Request): Promise<Response> {
   const validation = CoachUpdateSchema.safeParse(parsed);
   if (!validation.success) {
     console.error('[support-api] Zod validation failed:', validation.error.issues.slice(0, 5));
+
+    // Partial-response salvage path. If this is the FIRST call (no prior
+    // state on the client) and we can at least pull a valid framework_id
+    // out of the raw response, hydrate a tentative CoachUpdate so the
+    // panel renders the framework structure instead of going blank.
+    // When prior IS present, the hook keeps its existing state, so the
+    // schema-failure code path is the friendlier response there.
+    if (!prior) {
+      const salvaged = salvageFrameworkId(parsed);
+      if (salvaged) {
+        console.warn(`[support-api] schema-fail salvage — emitting tentative ${salvaged} update`);
+        return jsonResponse({
+          ok: true,
+          update: buildTentativeUpdate(salvaged),
+          partial: true,
+        });
+      }
+    }
+
     return jsonResponse(
       { ok: false, code: 'schema', warning: 'Coach output failed schema validation' },
       200

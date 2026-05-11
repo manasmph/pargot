@@ -32,7 +32,7 @@ interface InterviewRoomProps {
 export function InterviewRoom({ appConfig }: InterviewRoomProps) {
   const { isConnected, start } = useSessionContext();
   const { resolvedTheme } = useTheme();
-  const { state, isLoading, error, errorCode } = useSupportCues();
+  const { state, isLoading, error, errorCode, isPartial } = useSupportCues();
 
   // ── Connecting state ────────────────────────────────────────────────────
   // We show the loader from the moment the user clicks "Start interview"
@@ -152,6 +152,7 @@ export function InterviewRoom({ appConfig }: InterviewRoomProps) {
             isLoading={isLoading}
             error={error}
             errorCode={errorCode}
+            isPartial={isPartial}
             className="min-h-0 flex-[3] md:max-w-[420px] md:min-w-[280px] md:flex-[2]"
           />
         </motion.div>

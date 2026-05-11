@@ -20,7 +20,8 @@ import { getFramework } from '@/lib/frameworks';
  */
 
 const DEBOUNCE_MS = 900;
-const TRANSCRIPT_WINDOW = 6; // last 6 turns sent as `recent_transcript`
+const TRANSCRIPT_WINDOW = 6; // last 6 turns considered for `recent_transcript`
+const TRANSCRIPT_MAX_CHARS = 1500; // hard cap so a long monologue can't blow up prompt cost
 
 // Internal LiveKit message shape (we only read a few fields and stay loose).
 type LkMessage = {
@@ -46,13 +47,18 @@ function lastAgentMessage(messages: LkMessage[]): LkMessage | undefined {
 }
 
 function buildRecentTranscript(messages: LkMessage[], window = TRANSCRIPT_WINDOW): string {
-  return messages
-    .slice(-window)
-    .map((m) => {
-      const role = isAgentMessage(m) ? 'Interviewer' : 'Candidate';
-      return `${role}: ${m.message ?? ''}`;
-    })
-    .join('\n');
+  // Build the candidate line-list, newest at the end.
+  const lines = messages.slice(-window).map((m) => {
+    const role = isAgentMessage(m) ? 'Interviewer' : 'Candidate';
+    return `${role}: ${m.message ?? ''}`;
+  });
+
+  // Drop oldest lines until the total stays within TRANSCRIPT_MAX_CHARS.
+  // We keep at least one line so the model always sees the most recent turn.
+  while (lines.length > 1 && lines.join('\n').length > TRANSCRIPT_MAX_CHARS) {
+    lines.shift();
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -116,6 +122,11 @@ export function useSupportCues() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<CoachErrorCode | null>(null);
+  // Tentative-state flag (Phase 2.3). True when the server salvaged a
+  // framework_id from a schema-invalid response and emitted a stub
+  // CoachUpdate. UI shows a soft "tentative" indicator while this is set;
+  // the next successful response clears it.
+  const [isPartial, setIsPartial] = useState(false);
 
   // Refs that survive re-renders. Critical: `timerRef` outlives the messages
   // effect's cleanup so a debounced fetch isn't cancelled when an unrelated
@@ -148,6 +159,7 @@ export function useSupportCues() {
     setIsLoading(false);
     setError(null);
     setErrorCode(null);
+    setIsPartial(false);
   }, [isConnected]);
 
   // Cleanup on unmount.
@@ -252,8 +264,9 @@ export function useSupportCues() {
         const framework = getFramework(payload.update.framework_id);
         const next = mergeUpdate(payload.update, framework);
         setState(next);
+        setIsPartial(Boolean(payload.partial));
         console.log(
-          `[support] state updated — ${framework.id}/${payload.update.current_stage_id}, ${payload.update.done_cue_ids.length} cues done`
+          `[support] state updated — ${framework.id}/${payload.update.current_stage_id}, ${payload.update.done_cue_ids.length} cues done${payload.partial ? ' (tentative)' : ''}`
         );
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
@@ -273,5 +286,5 @@ export function useSupportCues() {
     // Unmount cleanup is handled by the separate effect above.
   }, [messages]);
 
-  return { state, isLoading, error, errorCode };
+  return { state, isLoading, error, errorCode, isPartial };
 }

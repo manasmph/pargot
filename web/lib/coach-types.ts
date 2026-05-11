@@ -100,9 +100,17 @@ export type CoachErrorCode =
 
 /**
  * Server response shape from /api/support.
- * `ok=false` is used for soft failures where we want the panel to keep
- * showing prior state (where applicable) instead of going blank.
+ *
+ *  - `ok: true`                       → fully validated CoachUpdate, normal path.
+ *  - `ok: true, partial: true`        → Zod validation failed but we salvaged a
+ *                                       framework_id from the raw response and
+ *                                       hydrated a minimal CoachUpdate (current
+ *                                       stage = first stage, no cues ticked).
+ *                                       The UI renders a "tentative" indicator
+ *                                       so the user knows the panel is a stub.
+ *  - `ok: false`                      → hard failure. Hook preserves any prior
+ *                                       state and surfaces a banner.
  */
 export type CoachResponse =
-  | { ok: true; update: CoachUpdate }
+  | { ok: true; update: CoachUpdate; partial?: boolean }
   | { ok: false; code: CoachErrorCode; warning: string };
