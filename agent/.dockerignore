@@ -1,0 +1,13 @@
+# The build context is agent/, so we just need to skip Python cruft.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
