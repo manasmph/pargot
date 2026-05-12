@@ -14,25 +14,20 @@
  * The `ok: false` path is a SOFT failure: the client preserves its
  * prior state and shows a warning chip instead of going blank.
  */
-import { GoogleGenAI, Type } from "@google/genai";
-import type { Schema } from "@google/genai";
-import { CoachUpdateSchema } from "@/lib/coach-schema";
+import { GoogleGenAI, Type } from '@google/genai';
+import type { Schema } from '@google/genai';
+import { CoachUpdateSchema } from '@/lib/coach-schema';
 import type {
   CoachErrorCode,
   CoachPrior,
   CoachResponse,
   CoachUpdate,
   FrameworkId,
-} from "@/lib/coach-types";
-import {
-  FRAMEWORKS,
-  FRAMEWORK_IDS,
-  getValidCueIds,
-  getValidStageIds,
-} from "@/lib/frameworks";
-import { buildSupportSystemPrompt } from "@/lib/support-prompt";
+} from '@/lib/coach-types';
+import { FRAMEWORKS, FRAMEWORK_IDS, getValidCueIds, getValidStageIds } from '@/lib/frameworks';
+import { buildSupportSystemPrompt } from '@/lib/support-prompt';
 
-export const runtime = "nodejs";
+export const runtime = 'nodejs';
 export const revalidate = 0;
 
 // ─── Gemini structured-output schema ──────────────────────────────────────
@@ -45,21 +40,21 @@ const COACH_UPDATE_SCHEMA: Schema = {
     framework_id: {
       type: Type.STRING,
       enum: [...FRAMEWORK_IDS],
-      description: "The PM framework chosen for this question.",
+      description: 'The PM framework chosen for this question.',
     },
     current_stage_id: {
       type: Type.STRING,
-      description: "Stage id within the chosen framework.",
+      description: 'Stage id within the chosen framework.',
     },
     completed_stage_ids: {
       type: Type.ARRAY,
       items: { type: Type.STRING },
-      description: "Stage ids the candidate has clearly finished.",
+      description: 'Stage ids the candidate has clearly finished.',
     },
     done_cue_ids: {
       type: Type.ARRAY,
       items: { type: Type.STRING },
-      description: "Cue ids the candidate has covered (cumulative).",
+      description: 'Cue ids the candidate has covered (cumulative).',
     },
     hint: {
       type: Type.OBJECT,
@@ -68,18 +63,13 @@ const COACH_UPDATE_SCHEMA: Schema = {
         stage_id: { type: Type.STRING },
         text: { type: Type.STRING },
       },
-      required: ["stage_id", "text"],
-      description: "Optional ≤25-word nudge for the current stage.",
+      required: ['stage_id', 'text'],
+      description: 'Optional ≤25-word nudge for the current stage.',
     },
     // Phase 3.3 — feedback split off to /api/feedback so this slow
     // structured-state call doesn't gate fast critique display.
   },
-  required: [
-    "framework_id",
-    "current_stage_id",
-    "completed_stage_ids",
-    "done_cue_ids",
-  ],
+  required: ['framework_id', 'current_stage_id', 'completed_stage_ids', 'done_cue_ids'],
 };
 
 // ─── Model availability + background quota probing ──────────────────────
@@ -115,10 +105,10 @@ const COACH_UPDATE_SCHEMA: Schema = {
 //      next user request automatically picks the highest-priority one.
 
 const MODELS = [
-  "gemini-2.5-flash",
-  "gemini-3.1-flash-lite",
-  "gemma-4-26b-a4b-it",
-  "openai/gpt-oss-120b",
+  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
+  'gemma-4-26b-a4b-it',
+  'openai/gpt-oss-120b',
 ] as const;
 type Model = (typeof MODELS)[number];
 
@@ -128,10 +118,10 @@ const RATE_LIMIT_PROBE_MS = 120_000; // 2 min
 const FAST_PROBE_MS = 30_000; // 30 s
 
 const modelAvailability: Record<Model, boolean> = {
-  "gemini-2.5-flash": true,
-  "gemini-3.1-flash-lite": true,
-  "gemma-4-26b-a4b-it": true,
-  "openai/gpt-oss-120b": true,
+  'gemini-2.5-flash': true,
+  'gemini-3.1-flash-lite': true,
+  'gemma-4-26b-a4b-it': true,
+  'openai/gpt-oss-120b': true,
 };
 const probeTimers = new Map<Model, ReturnType<typeof setTimeout>>();
 
@@ -155,11 +145,11 @@ function nextAvailableModel(current: Model): Model | null {
 }
 
 function isGemma(model: string): boolean {
-  return model.startsWith("gemma");
+  return model.startsWith('gemma');
 }
 
 function isGroq(model: string): boolean {
-  return model === "openai/gpt-oss-120b";
+  return model === 'openai/gpt-oss-120b';
 }
 
 /**
@@ -178,11 +168,7 @@ function isGroq(model: string): boolean {
  *   permanent      400 / 401 / 403 / 404 — request or auth problem;
  *                  retrying with a different model won't help
  */
-type FailureCategory =
-  | "rate_limited"
-  | "overloaded"
-  | "transient"
-  | "permanent";
+type FailureCategory = 'rate_limited' | 'overloaded' | 'transient' | 'permanent';
 
 function categorizeFailure(err: unknown): FailureCategory {
   const e = err as { status?: number; message?: string; code?: number };
@@ -190,61 +176,61 @@ function categorizeFailure(err: unknown): FailureCategory {
   const msg = String(e?.message ?? err).toLowerCase();
 
   // ── Rate limit / quota ────────────────────────────────────────────────
-  if (status === 429) return "rate_limited";
+  if (status === 429) return 'rate_limited';
   if (
-    msg.includes("429") ||
-    msg.includes("quota") ||
-    msg.includes("resource_exhausted") ||
-    msg.includes("rate limit") ||
-    msg.includes("rate-limit")
+    msg.includes('429') ||
+    msg.includes('quota') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('rate limit') ||
+    msg.includes('rate-limit')
   ) {
-    return "rate_limited";
+    return 'rate_limited';
   }
 
   // ── Overloaded / high traffic ────────────────────────────────────────
-  if (status === 503) return "overloaded";
+  if (status === 503) return 'overloaded';
   if (
-    msg.includes("overloaded") ||
-    msg.includes("high traffic") ||
-    msg.includes("unavailable") ||
-    msg.includes("try again later") ||
-    msg.includes("busy")
+    msg.includes('overloaded') ||
+    msg.includes('high traffic') ||
+    msg.includes('unavailable') ||
+    msg.includes('try again later') ||
+    msg.includes('busy')
   ) {
-    return "overloaded";
+    return 'overloaded';
   }
 
   // ── Generic transient 5xx / network ──────────────────────────────────
-  if (status === 500 || status === 502 || status === 504) return "transient";
+  if (status === 500 || status === 502 || status === 504) return 'transient';
   if (
-    msg.includes("timeout") ||
-    msg.includes("deadline") ||
-    msg.includes("econnreset") ||
-    msg.includes("etimedout") ||
-    msg.includes("econnrefused") ||
-    msg.includes("enotfound") ||
-    msg.includes("socket hang up") ||
-    msg.includes("fetch failed") ||
-    msg.includes("network")
+    msg.includes('timeout') ||
+    msg.includes('deadline') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('econnrefused') ||
+    msg.includes('enotfound') ||
+    msg.includes('socket hang up') ||
+    msg.includes('fetch failed') ||
+    msg.includes('network')
   ) {
-    return "transient";
+    return 'transient';
   }
 
   // ── Anything else — permanent (don't retry with a different model) ──
-  return "permanent";
+  return 'permanent';
 }
 
 function isRetryable(c: FailureCategory): boolean {
-  return c !== "permanent";
+  return c !== 'permanent';
 }
 
 function probeDelayFor(c: FailureCategory): number {
-  return c === "rate_limited" ? RATE_LIMIT_PROBE_MS : FAST_PROBE_MS;
+  return c === 'rate_limited' ? RATE_LIMIT_PROBE_MS : FAST_PROBE_MS;
 }
 
 function errorCodeFor(c: FailureCategory): CoachErrorCode {
-  if (c === "rate_limited") return "rate_limited";
-  if (c === "overloaded" || c === "transient") return "service_unavailable";
-  return "unknown";
+  if (c === 'rate_limited') return 'rate_limited';
+  if (c === 'overloaded' || c === 'transient') return 'service_unavailable';
+  return 'unknown';
 }
 
 /**
@@ -259,13 +245,11 @@ async function callCoachModel(
   groqApiKey: string | undefined,
   model: Model,
   systemInstruction: string,
-  recentTranscript: string,
+  recentTranscript: string
 ): Promise<string | undefined> {
   if (isGroq(model)) {
     if (!groqApiKey) {
-      const err = Object.assign(new Error("GROQ_API_KEY is not configured"), {
-        status: 401,
-      }); // permanent error
+      const err = Object.assign(new Error('GROQ_API_KEY is not configured'), { status: 401 }); // permanent error
       throw err;
     }
     const schemaPrompt = `
@@ -278,38 +262,29 @@ You MUST return a JSON object that matches the following structure:
   "hint": { "stage_id": "string", "text": "string" } // hint is optional, can be null or omitted
 }
 `;
-    const response = await fetch(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${groqApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            {
-              role: "system",
-              content: systemInstruction + "\n\n" + schemaPrompt,
-            },
-            { role: "user", content: recentTranscript },
-          ],
-          temperature: 0.4,
-          max_tokens: 1024,
-          response_format: { type: "json_object" },
-        }),
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${groqApiKey}`,
+        'Content-Type': 'application/json',
       },
-    );
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemInstruction + '\n\n' + schemaPrompt },
+          { role: 'user', content: recentTranscript },
+        ],
+        temperature: 0.4,
+        max_tokens: 1024,
+        response_format: { type: 'json_object' },
+      }),
+    });
 
     if (!response.ok) {
       const errText = await response.text();
-      const err = Object.assign(
-        new Error(`Groq API error: ${response.status} ${errText}`),
-        {
-          status: response.status,
-        },
-      );
+      const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`), {
+        status: response.status,
+      });
       throw err;
     }
 
@@ -323,11 +298,11 @@ You MUST return a JSON object that matches the following structure:
       systemInstruction,
       temperature: 0.4,
       maxOutputTokens: 1024,
-      responseMimeType: "application/json",
+      responseMimeType: 'application/json',
       responseSchema: COACH_UPDATE_SCHEMA,
       ...(isGemma(model) ? {} : { thinkingConfig: { thinkingBudget: 0 } }),
     },
-    contents: [{ role: "user", parts: [{ text: recentTranscript }] }],
+    contents: [{ role: 'user', parts: [{ text: recentTranscript }] }],
   });
   return response.text;
 }
@@ -344,8 +319,8 @@ function extractJsonFromText(text: string): string {
   const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (fenceMatch) return fenceMatch[1].trim();
 
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
   if (start !== -1 && end > start) return text.slice(start, end + 1).trim();
 
   return text.trim();
@@ -358,9 +333,9 @@ function extractJsonFromText(text: string): string {
  * show the user a tentative stepper than a blank panel.
  */
 function salvageFrameworkId(parsed: unknown): FrameworkId | null {
-  if (!parsed || typeof parsed !== "object") return null;
+  if (!parsed || typeof parsed !== 'object') return null;
   const candidate = (parsed as { framework_id?: unknown }).framework_id;
-  if (typeof candidate !== "string") return null;
+  if (typeof candidate !== 'string') return null;
   if (!(FRAMEWORK_IDS as readonly string[]).includes(candidate)) return null;
   return candidate as FrameworkId;
 }
@@ -390,13 +365,13 @@ function markUnavailable(
   model: Model,
   apiKey: string,
   groqApiKey: string | undefined,
-  category: FailureCategory,
+  category: FailureCategory
 ): void {
   modelAvailability[model] = false;
   if (probeTimers.has(model)) return;
   const probeIn = probeDelayFor(category);
   console.warn(
-    `[support-api] ${model} marked unavailable (${category}) — background probe in ${probeIn / 1000}s`,
+    `[support-api] ${model} marked unavailable (${category}) — background probe in ${probeIn / 1000}s`
   );
   const timer = setTimeout(() => {
     probeTimers.delete(model);
@@ -417,35 +392,29 @@ function markUnavailable(
 async function probeModel(
   model: Model,
   apiKey: string,
-  groqApiKey: string | undefined,
+  groqApiKey: string | undefined
 ): Promise<void> {
   console.log(`[support-api] probing ${model} for recovery`);
   try {
     if (isGroq(model)) {
-      if (!groqApiKey) throw new Error("No GROQ_API_KEY");
-      const response = await fetch(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${groqApiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{ role: "user", content: "ping" }],
-            max_tokens: 1,
-          }),
+      if (!groqApiKey) throw new Error('No GROQ_API_KEY');
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${groqApiKey}`,
+          'Content-Type': 'application/json',
         },
-      );
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 1,
+        }),
+      });
       if (!response.ok) {
         const errText = await response.text();
-        const err = Object.assign(
-          new Error(`Groq probe failed: ${response.status} ${errText}`),
-          {
-            status: response.status,
-          },
-        );
+        const err = Object.assign(new Error(`Groq probe failed: ${response.status} ${errText}`), {
+          status: response.status,
+        });
         throw err;
       }
     } else {
@@ -457,7 +426,7 @@ async function probeModel(
       await ai.models.generateContent({
         model,
         config,
-        contents: [{ role: "user", parts: [{ text: "ping" }] }],
+        contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
       });
     }
     modelAvailability[model] = true;
@@ -468,16 +437,13 @@ async function probeModel(
       // A permanent error during probe (e.g., invalid API key) shouldn't
       // keep the model parked forever; let the next user request surface
       // the persistent issue.
-      console.warn(
-        `[support-api] ${model} probe failed with permanent error:`,
-        err,
-      );
+      console.warn(`[support-api] ${model} probe failed with permanent error:`, err);
       modelAvailability[model] = true;
       return;
     }
     const delay = probeDelayFor(category);
     console.log(
-      `[support-api] ${model} probe still failing (${category}) — retry in ${delay / 1000}s`,
+      `[support-api] ${model} probe still failing (${category}) — retry in ${delay / 1000}s`
     );
     const timer = setTimeout(() => {
       probeTimers.delete(model);
@@ -498,8 +464,8 @@ function jsonResponse(payload: CoachResponse, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-cache, no-store",
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache, no-store',
     },
   });
 }
@@ -516,11 +482,8 @@ export async function GET(): Promise<Response> {
   const apiKey = process.env.GOOGLE_API_KEY;
   const groqApiKey = process.env.GROQ_API_KEY;
   if (!apiKey && !groqApiKey) {
-    console.error("[support-api] health: No API keys set");
-    return jsonResponse(
-      { ok: false, code: "config", warning: "API keys are not configured" },
-      500,
-    );
+    console.error('[support-api] health: No API keys set');
+    return jsonResponse({ ok: false, code: 'config', warning: 'API keys are not configured' }, 500);
   }
 
   const ai = apiKey ? new GoogleGenAI({ apiKey }) : ({} as GoogleGenAI);
@@ -531,91 +494,68 @@ export async function GET(): Promise<Response> {
   for (let attempt = 0; attempt < MODELS.length; attempt++) {
     try {
       if (isGroq(activeModel)) {
-        if (!groqApiKey) throw new Error("No GROQ_API_KEY configured");
-        const response = await fetch(
-          "https://api.groq.com/openai/v1/chat/completions",
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${groqApiKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: activeModel,
-              messages: [{ role: "user", content: "ping" }],
-              max_tokens: 1,
-            }),
+        if (!groqApiKey) throw new Error('No GROQ_API_KEY configured');
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${groqApiKey}`,
+            'Content-Type': 'application/json',
           },
-        );
+          body: JSON.stringify({
+            model: activeModel,
+            messages: [{ role: 'user', content: 'ping' }],
+            max_tokens: 1,
+          }),
+        });
         if (!response.ok) {
           const errText = await response.text();
-          const err = Object.assign(
-            new Error(`Groq API error: ${response.status} ${errText}`),
-            {
-              status: response.status,
-            },
-          );
+          const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`), {
+            status: response.status,
+          });
           throw err;
         }
       } else {
-        if (!apiKey) throw new Error("No GOOGLE_API_KEY configured");
+        if (!apiKey) throw new Error('No GOOGLE_API_KEY configured');
         const config = isGemma(activeModel)
           ? { maxOutputTokens: 1 }
           : { maxOutputTokens: 1, thinkingConfig: { thinkingBudget: 0 } };
         await ai.models.generateContent({
           model: activeModel,
           config,
-          contents: [{ role: "user", parts: [{ text: "ping" }] }],
+          contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
         });
       }
       console.log(`[support-api] health OK via ${activeModel}`);
       return new Response(JSON.stringify({ ok: true, model: activeModel }), {
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-cache, no-store",
-        },
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' },
       });
     } catch (err) {
       lastError = err;
       const category = categorizeFailure(err);
       lastCategory = category;
       if (!isRetryable(category)) {
-        console.error(
-          `[support-api] health: ${activeModel} permanent failure:`,
-          err,
-        );
+        console.error(`[support-api] health: ${activeModel} permanent failure:`, err);
         break;
       }
-      markUnavailable(activeModel, apiKey ?? "", groqApiKey, category);
+      markUnavailable(activeModel, apiKey ?? '', groqApiKey, category);
       const next = nextAvailableModel(activeModel);
       if (!next) {
-        console.warn(
-          `[support-api] health: ${activeModel} ${category}, no fallback`,
-        );
+        console.warn(`[support-api] health: ${activeModel} ${category}, no fallback`);
         break;
       }
-      console.warn(
-        `[support-api] health: ${activeModel} ${category} → trying ${next}`,
-      );
+      console.warn(`[support-api] health: ${activeModel} ${category} → trying ${next}`);
       activeModel = next;
     }
   }
 
-  const code: CoachErrorCode = lastCategory
-    ? errorCodeFor(lastCategory)
-    : "unknown";
-  const status =
-    lastCategory === "rate_limited"
-      ? 429
-      : lastCategory === "permanent"
-        ? 500
-        : 503;
+  const code: CoachErrorCode = lastCategory ? errorCodeFor(lastCategory) : 'unknown';
+  const status = lastCategory === 'rate_limited' ? 429 : lastCategory === 'permanent' ? 500 : 503;
   const warning =
-    lastCategory === "rate_limited"
-      ? "All coach models are rate-limited."
-      : lastCategory === "overloaded" || lastCategory === "transient"
-        ? "Coach models are experiencing high traffic."
-        : `Coach error: ${(lastError as Error)?.message ?? "unknown"}`;
+    lastCategory === 'rate_limited'
+      ? 'All coach models are rate-limited.'
+      : lastCategory === 'overloaded' || lastCategory === 'transient'
+        ? 'Coach models are experiencing high traffic.'
+        : `Coach error: ${(lastError as Error)?.message ?? 'unknown'}`;
 
   return jsonResponse({ ok: false, code, warning }, status);
 }
@@ -624,41 +564,32 @@ export async function POST(req: Request): Promise<Response> {
   const apiKey = process.env.GOOGLE_API_KEY;
   const groqApiKey = process.env.GROQ_API_KEY;
   if (!apiKey && !groqApiKey) {
-    console.error("[support-api] API keys not set");
-    return jsonResponse(
-      { ok: false, code: "config", warning: "API keys are not configured" },
-      500,
-    );
+    console.error('[support-api] API keys not set');
+    return jsonResponse({ ok: false, code: 'config', warning: 'API keys are not configured' }, 500);
   }
 
   let body: SupportRequest;
   try {
     body = (await req.json()) as SupportRequest;
   } catch {
-    return jsonResponse(
-      { ok: false, code: "invalid_input", warning: "Invalid JSON body" },
-      400,
-    );
+    return jsonResponse({ ok: false, code: 'invalid_input', warning: 'Invalid JSON body' }, 400);
   }
 
   const { recent_transcript, prior } = body;
-  if (!recent_transcript || typeof recent_transcript !== "string") {
+  if (!recent_transcript || typeof recent_transcript !== 'string') {
     return jsonResponse(
-      {
-        ok: false,
-        code: "invalid_input",
-        warning: "Missing recent_transcript",
-      },
-      400,
+      { ok: false, code: 'invalid_input', warning: 'Missing recent_transcript' },
+      400
     );
   }
 
   console.log(
-    `[support-api] request — transcript ${recent_transcript.length} chars, prior=${prior ? `${prior.framework_id}/${prior.current_stage_id}` : "none"
+    `[support-api] request — transcript ${recent_transcript.length} chars, prior=${
+      prior ? `${prior.framework_id}/${prior.current_stage_id}` : 'none'
     }, available=${Object.entries(modelAvailability)
       .filter(([, v]) => v)
       .map(([k]) => k)
-      .join("/")}`,
+      .join('/')}`
   );
 
   const ai = apiKey ? new GoogleGenAI({ apiKey }) : ({} as GoogleGenAI);
@@ -675,13 +606,7 @@ export async function POST(req: Request): Promise<Response> {
 
   for (let attempt = 0; attempt < MODELS.length; attempt++) {
     try {
-      raw = await callCoachModel(
-        ai,
-        groqApiKey,
-        usedModel,
-        systemInstruction,
-        recent_transcript,
-      );
+      raw = await callCoachModel(ai, groqApiKey, usedModel, systemInstruction, recent_transcript);
       break; // success
     } catch (err) {
       lastError = err;
@@ -693,12 +618,10 @@ export async function POST(req: Request): Promise<Response> {
         break;
       }
 
-      markUnavailable(usedModel, apiKey ?? "", groqApiKey, category);
+      markUnavailable(usedModel, apiKey ?? '', groqApiKey, category);
       const next = nextAvailableModel(usedModel);
       if (!next) {
-        console.warn(
-          `[support-api] ${usedModel} ${category}, no fallback available`,
-        );
+        console.warn(`[support-api] ${usedModel} ${category}, no fallback available`);
         break;
       }
       console.warn(`[support-api] ${usedModel} ${category} → trying ${next}`);
@@ -708,20 +631,15 @@ export async function POST(req: Request): Promise<Response> {
 
   if (!raw) {
     // Map the final failure category to the right HTTP status + UI code.
-    const code = lastCategory ? errorCodeFor(lastCategory) : "unknown";
-    const status =
-      lastCategory === "rate_limited"
-        ? 429
-        : lastCategory === "permanent"
-          ? 500
-          : 503;
+    const code = lastCategory ? errorCodeFor(lastCategory) : 'unknown';
+    const status = lastCategory === 'rate_limited' ? 429 : lastCategory === 'permanent' ? 500 : 503;
 
     const warning =
-      lastCategory === "rate_limited"
-        ? "Coach is rate-limited across all models. Updates will resume automatically once a model recovers."
-        : lastCategory === "overloaded" || lastCategory === "transient"
-          ? "Coach models are experiencing high traffic. Updates will resume shortly."
-          : `Coach error: ${(lastError as Error)?.message ?? "unknown"}`;
+      lastCategory === 'rate_limited'
+        ? 'Coach is rate-limited across all models. Updates will resume automatically once a model recovers.'
+        : lastCategory === 'overloaded' || lastCategory === 'transient'
+          ? 'Coach models are experiencing high traffic. Updates will resume shortly.'
+          : `Coach error: ${(lastError as Error)?.message ?? 'unknown'}`;
 
     return jsonResponse({ ok: false, code, warning }, status);
   }
@@ -733,24 +651,13 @@ export async function POST(req: Request): Promise<Response> {
   try {
     parsed = JSON.parse(extractJsonFromText(raw));
   } catch (err) {
-    console.error(
-      "[support-api] JSON parse failed:",
-      err,
-      "raw:",
-      raw.slice(0, 400),
-    );
-    return jsonResponse(
-      { ok: false, code: "schema", warning: "Model returned invalid JSON" },
-      200,
-    );
+    console.error('[support-api] JSON parse failed:', err, 'raw:', raw.slice(0, 400));
+    return jsonResponse({ ok: false, code: 'schema', warning: 'Model returned invalid JSON' }, 200);
   }
 
   const validation = CoachUpdateSchema.safeParse(parsed);
   if (!validation.success) {
-    console.error(
-      "[support-api] Zod validation failed:",
-      validation.error.issues.slice(0, 5),
-    );
+    console.error('[support-api] Zod validation failed:', validation.error.issues.slice(0, 5));
 
     // Partial-response salvage path. If this is the FIRST call (no prior
     // state on the client) and we can at least pull a valid framework_id
@@ -761,9 +668,7 @@ export async function POST(req: Request): Promise<Response> {
     if (!prior) {
       const salvaged = salvageFrameworkId(parsed);
       if (salvaged) {
-        console.warn(
-          `[support-api] schema-fail salvage — emitting tentative ${salvaged} update`,
-        );
+        console.warn(`[support-api] schema-fail salvage — emitting tentative ${salvaged} update`);
         return jsonResponse({
           ok: true,
           update: buildTentativeUpdate(salvaged),
@@ -773,12 +678,8 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     return jsonResponse(
-      {
-        ok: false,
-        code: "schema",
-        warning: "Coach output failed schema validation",
-      },
-      200,
+      { ok: false, code: 'schema', warning: 'Coach output failed schema validation' },
+      200
     );
   }
 
@@ -789,7 +690,7 @@ export async function POST(req: Request): Promise<Response> {
   // tried to switch, override server-side rather than confuse the UI.
   if (prior && update.framework_id !== prior.framework_id) {
     console.warn(
-      `[support-api] framework lock: model returned ${update.framework_id}, forcing ${prior.framework_id}`,
+      `[support-api] framework lock: model returned ${update.framework_id}, forcing ${prior.framework_id}`
     );
     update.framework_id = prior.framework_id;
   }
@@ -802,14 +703,12 @@ export async function POST(req: Request): Promise<Response> {
     // Fall back to the prior's current stage, or the first stage of the framework.
     const fallback = prior?.current_stage_id ?? Array.from(validStageIds)[0];
     console.warn(
-      `[support-api] invalid current_stage_id "${update.current_stage_id}" — using "${fallback}"`,
+      `[support-api] invalid current_stage_id "${update.current_stage_id}" — using "${fallback}"`
     );
     update.current_stage_id = fallback;
   }
 
-  update.completed_stage_ids = update.completed_stage_ids.filter((id) =>
-    validStageIds.has(id),
-  );
+  update.completed_stage_ids = update.completed_stage_ids.filter((id) => validStageIds.has(id));
 
   // Merge with prior done_cue_ids so the model can never accidentally drop
   // a previously-ticked cue (cumulative semantics, defence in depth).
@@ -826,7 +725,7 @@ export async function POST(req: Request): Promise<Response> {
 
   console.log(
     `[support-api] OK (${usedModel}) — ${update.framework_id}/${update.current_stage_id}, ` +
-    `${update.done_cue_ids.length} cues done`,
+      `${update.done_cue_ids.length} cues done`
   );
 
   // Type assertion: `framework_id` was narrowed to FrameworkId by the catalog
