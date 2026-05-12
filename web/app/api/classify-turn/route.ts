@@ -111,7 +111,7 @@ You MUST return a JSON object that matches the following structure:
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${groqApiKey}`,
+            Authorization: `Bearer ${groqApiKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
@@ -127,8 +127,7 @@ You MUST return a JSON object that matches the following structure:
         });
         if (!response.ok) {
           const errText = await response.text();
-          const err = new Error(`Groq API error: ${response.status} ${errText}`);
-          (err as any).status = response.status;
+          const err = Object.assign(new Error(), { status:  });
           throw err;
         }
         const json = await response.json();
@@ -158,7 +157,10 @@ You MUST return a JSON object that matches the following structure:
   }
 
   if (!raw) {
-    return jsonResponse({ ok: false, warning: 'Empty classifier response or all models failed' }, 503);
+    return jsonResponse(
+      { ok: false, warning: 'Empty classifier response or all models failed' },
+      503
+    );
   }
 
   let parsed: unknown;

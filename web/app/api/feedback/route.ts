@@ -22,7 +22,11 @@ import { FEEDBACK_SYSTEM_PROMPT } from '@/lib/feedback-prompt';
 export const runtime = 'nodejs';
 export const revalidate = 0;
 
-const FEEDBACK_MODELS = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'openai/gpt-oss-120b'] as const;
+const FEEDBACK_MODELS = [
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+  'openai/gpt-oss-120b',
+] as const;
 type FeedbackModel = (typeof FEEDBACK_MODELS)[number];
 
 function isGroq(model: string): boolean {
@@ -92,8 +96,7 @@ async function callFeedbackModel(
 ): Promise<string | undefined> {
   if (isGroq(model)) {
     if (!groqApiKey) {
-      const err = new Error('GROQ_API_KEY is not configured');
-      (err as any).status = 401;
+      const err = Object.assign(new Error(), { status:  });
       throw err;
     }
     const schemaPrompt = `
@@ -108,7 +111,7 @@ Return an array with maximum 3 items.
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${groqApiKey}`,
+        Authorization: `Bearer ${groqApiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -124,8 +127,7 @@ Return an array with maximum 3 items.
     });
     if (!response.ok) {
       const errText = await response.text();
-      const err = new Error(`Groq API error: ${response.status} ${errText}`);
-      (err as any).status = response.status;
+      const err = Object.assign(new Error(), { status:  });
       throw err;
     }
     const json = await response.json();

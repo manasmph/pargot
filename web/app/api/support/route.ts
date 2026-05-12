@@ -104,7 +104,12 @@ const COACH_UPDATE_SCHEMA: Schema = {
 //      If the probe succeeds, the model is marked available again — the
 //      next user request automatically picks the highest-priority one.
 
-const MODELS = ['gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it', 'openai/gpt-oss-120b'] as const;
+const MODELS = [
+  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
+  'gemma-4-26b-a4b-it',
+  'openai/gpt-oss-120b',
+] as const;
 type Model = (typeof MODELS)[number];
 
 // Probe cadence is category-driven: quota windows are minutes-long so probe
@@ -244,8 +249,7 @@ async function callCoachModel(
 ): Promise<string | undefined> {
   if (isGroq(model)) {
     if (!groqApiKey) {
-      const err = new Error('GROQ_API_KEY is not configured');
-      (err as any).status = 401; // permanent error
+      const err = Object.assign(new Error(), { status:  }); // permanent error
       throw err;
     }
     const schemaPrompt = `
@@ -261,7 +265,7 @@ You MUST return a JSON object that matches the following structure:
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${groqApiKey}`,
+        Authorization: `Bearer ${groqApiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -278,8 +282,7 @@ You MUST return a JSON object that matches the following structure:
 
     if (!response.ok) {
       const errText = await response.text();
-      const err = new Error(`Groq API error: ${response.status} ${errText}`);
-      (err as any).status = response.status;
+      const err = Object.assign(new Error(), { status:  });
       throw err;
     }
 
@@ -356,7 +359,12 @@ function buildTentativeUpdate(frameworkId: FrameworkId): CoachUpdate {
  * brief 503 overloads don't get stuck behind a 2-minute quota timer.
  * Idempotent — calling twice for the same model keeps the existing timer.
  */
-function markUnavailable(model: Model, apiKey: string, groqApiKey: string | undefined, category: FailureCategory): void {
+function markUnavailable(
+  model: Model,
+  apiKey: string,
+  groqApiKey: string | undefined,
+  category: FailureCategory
+): void {
   modelAvailability[model] = false;
   if (probeTimers.has(model)) return;
   const probeIn = probeDelayFor(category);
@@ -379,7 +387,11 @@ function markUnavailable(model: Model, apiKey: string, groqApiKey: string | unde
  * failures (e.g. invalid key) re-mark the model available so the next
  * real request surfaces the issue.
  */
-async function probeModel(model: Model, apiKey: string, groqApiKey: string | undefined): Promise<void> {
+async function probeModel(
+  model: Model,
+  apiKey: string,
+  groqApiKey: string | undefined
+): Promise<void> {
   console.log(`[support-api] probing ${model} for recovery`);
   try {
     if (isGroq(model)) {
@@ -387,7 +399,7 @@ async function probeModel(model: Model, apiKey: string, groqApiKey: string | und
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${groqApiKey}`,
+          Authorization: `Bearer ${groqApiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -398,8 +410,7 @@ async function probeModel(model: Model, apiKey: string, groqApiKey: string | und
       });
       if (!response.ok) {
         const errText = await response.text();
-        const err = new Error(`Groq probe failed: ${response.status} ${errText}`);
-        (err as any).status = response.status;
+        const err = Object.assign(new Error(), { status:  });
         throw err;
       }
     } else {
@@ -468,10 +479,7 @@ export async function GET(): Promise<Response> {
   const groqApiKey = process.env.GROQ_API_KEY;
   if (!apiKey && !groqApiKey) {
     console.error('[support-api] health: No API keys set');
-    return jsonResponse(
-      { ok: false, code: 'config', warning: 'API keys are not configured' },
-      500
-    );
+    return jsonResponse({ ok: false, code: 'config', warning: 'API keys are not configured' }, 500);
   }
 
   const ai = apiKey ? new GoogleGenAI({ apiKey }) : ({} as GoogleGenAI);
@@ -486,7 +494,7 @@ export async function GET(): Promise<Response> {
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${groqApiKey}`,
+            Authorization: `Bearer ${groqApiKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
@@ -497,8 +505,7 @@ export async function GET(): Promise<Response> {
         });
         if (!response.ok) {
           const errText = await response.text();
-          const err = new Error(`Groq API error: ${response.status} ${errText}`);
-          (err as any).status = response.status;
+          const err = Object.assign(new Error(), { status:  });
           throw err;
         }
       } else {
@@ -552,10 +559,7 @@ export async function POST(req: Request): Promise<Response> {
   const groqApiKey = process.env.GROQ_API_KEY;
   if (!apiKey && !groqApiKey) {
     console.error('[support-api] API keys not set');
-    return jsonResponse(
-      { ok: false, code: 'config', warning: 'API keys are not configured' },
-      500
-    );
+    return jsonResponse({ ok: false, code: 'config', warning: 'API keys are not configured' }, 500);
   }
 
   let body: SupportRequest;
