@@ -105,10 +105,10 @@ const COACH_UPDATE_SCHEMA: Schema = {
 //      next user request automatically picks the highest-priority one.
 
 const MODELS = [
+  'openai/gpt-oss-120b',
   'gemini-2.5-flash',
   'gemini-3.1-flash-lite',
   'gemma-4-26b-a4b-it',
-  'openai/gpt-oss-120b',
 ] as const;
 type Model = (typeof MODELS)[number];
 
@@ -253,13 +253,17 @@ async function callCoachModel(
       throw err;
     }
     const schemaPrompt = `
-You MUST return a JSON object that matches the following structure:
+You MUST return a valid JSON object. Do not include markdown formatting or comments.
+Example format:
 {
-  "framework_id": "string",
-  "current_stage_id": "string",
-  "completed_stage_ids": ["string"], // array of strings
-  "done_cue_ids": ["string"], // array of strings
-  "hint": { "stage_id": "string", "text": "string" } // hint is optional, can be null or omitted
+  "framework_id": "example_framework",
+  "current_stage_id": "example_stage",
+  "completed_stage_ids": ["stage_1", "stage_2"],
+  "done_cue_ids": ["cue_1", "cue_2"],
+  "hint": {
+    "stage_id": "example_stage",
+    "text": "Your hint text here"
+  }
 }
 `;
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -275,7 +279,7 @@ You MUST return a JSON object that matches the following structure:
           { role: 'user', content: recentTranscript },
         ],
         temperature: 0.4,
-        max_tokens: 1024,
+        max_tokens: 2048,
         response_format: { type: 'json_object' },
       }),
     });

@@ -26,7 +26,7 @@ import type {
 export const runtime = 'nodejs';
 export const revalidate = 0;
 
-const CLASSIFY_MODELS = ['gemini-3.1-flash-lite', 'openai/gpt-oss-120b'] as const;
+const CLASSIFY_MODELS = ['openai/gpt-oss-120b', 'gemini-3.1-flash-lite'] as const;
 
 function isGroq(model: string): boolean {
   return model === 'openai/gpt-oss-120b';
@@ -101,11 +101,12 @@ export async function POST(req: Request): Promise<Response> {
       if (isGroq(model)) {
         if (!groqApiKey) throw new Error('GROQ_API_KEY is not configured');
         const schemaPrompt = `
-You MUST return a JSON object that matches the following structure:
+You MUST return a valid JSON object. Do not include markdown formatting or comments.
+Example format:
 {
-  "is_new_question": boolean,
-  "confidence": number,
-  "reason": "string" // optional
+  "is_new_question": true,
+  "confidence": 0.95,
+  "reason": "Explain the reason here"
 }
 `;
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -121,7 +122,7 @@ You MUST return a JSON object that matches the following structure:
               { role: 'user', content: body.recent_transcript },
             ],
             temperature: 0.1,
-            max_tokens: 80,
+            max_tokens: 1000,
             response_format: { type: 'json_object' },
           }),
         });
@@ -140,7 +141,7 @@ You MUST return a JSON object that matches the following structure:
           config: {
             systemInstruction,
             temperature: 0.1, // deterministic — this is a binary classification
-            maxOutputTokens: 80,
+            maxOutputTokens: 200,
             responseMimeType: 'application/json',
             responseSchema: CLASSIFY_SCHEMA,
           },

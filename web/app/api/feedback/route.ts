@@ -23,9 +23,9 @@ export const runtime = 'nodejs';
 export const revalidate = 0;
 
 const FEEDBACK_MODELS = [
+  'openai/gpt-oss-120b',
   'gemini-3.1-flash-lite',
   'gemini-2.5-flash',
-  'openai/gpt-oss-120b',
 ] as const;
 type FeedbackModel = (typeof FEEDBACK_MODELS)[number];
 
@@ -100,13 +100,18 @@ async function callFeedbackModel(
       throw err;
     }
     const schemaPrompt = `
-You MUST return a JSON object that matches the following structure:
+You MUST return a valid JSON object. Do not include markdown formatting or comments.
+Example format:
 {
   "feedback": [
-    { "tone": "positive" | "warning" | "info", "text": "string" }
+    {
+      "tone": "positive",
+      "text": "Great job on explaining the trade-offs!"
+    }
   ]
 }
-Return an array with maximum 3 items.
+The "tone" must be exactly one of: "positive", "warning", or "info".
+Maximum 3 feedback items.
 `;
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -121,7 +126,7 @@ Return an array with maximum 3 items.
           { role: 'user', content: recentTranscript },
         ],
         temperature: 0.5,
-        max_tokens: 200,
+        max_tokens: 1000,
         response_format: { type: 'json_object' },
       }),
     });
