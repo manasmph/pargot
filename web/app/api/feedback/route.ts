@@ -13,24 +13,24 @@
  * keeps showing the prior turn's chips (or none on the first turn).
  * Feedback is non-essential — never block the user on it.
  */
-import { GoogleGenAI, Type } from '@google/genai';
-import type { Schema } from '@google/genai';
-import { FeedbackPayloadSchema } from '@/lib/coach-schema';
-import type { FeedbackResponse } from '@/lib/coach-types';
-import { FEEDBACK_SYSTEM_PROMPT } from '@/lib/feedback-prompt';
+import { GoogleGenAI, Type } from "@google/genai";
+import type { Schema } from "@google/genai";
+import { FeedbackPayloadSchema } from "@/lib/coach-schema";
+import type { FeedbackResponse } from "@/lib/coach-types";
+import { FEEDBACK_SYSTEM_PROMPT } from "@/lib/feedback-prompt";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 export const revalidate = 0;
 
 const FEEDBACK_MODELS = [
-  'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
-  'openai/gpt-oss-120b',
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-flash",
+  "openai/gpt-oss-120b",
 ] as const;
 type FeedbackModel = (typeof FEEDBACK_MODELS)[number];
 
 function isGroq(model: string): boolean {
-  return model === 'openai/gpt-oss-120b';
+  return model === "openai/gpt-oss-120b";
 }
 
 const FEEDBACK_SCHEMA: Schema = {
@@ -38,18 +38,18 @@ const FEEDBACK_SCHEMA: Schema = {
   properties: {
     feedback: {
       type: Type.ARRAY,
-      maxItems: '3',
+      maxItems: "3",
       items: {
         type: Type.OBJECT,
         properties: {
-          tone: { type: Type.STRING, enum: ['positive', 'warning', 'info'] },
+          tone: { type: Type.STRING, enum: ["positive", "warning", "info"] },
           text: { type: Type.STRING },
         },
-        required: ['tone', 'text'],
+        required: ["tone", "text"],
       },
     },
   },
-  required: ['feedback'],
+  required: ["feedback"],
 };
 
 interface FeedbackRequest {
@@ -59,15 +59,18 @@ interface FeedbackRequest {
 function jsonResponse(payload: FeedbackResponse, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' },
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-cache, no-store",
+    },
   });
 }
 
 function extractJsonFromText(text: string): string {
   const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (fenceMatch) return fenceMatch[1].trim();
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
   if (start !== -1 && end > start) return text.slice(start, end + 1).trim();
   return text.trim();
 }
@@ -78,13 +81,13 @@ function isRetryable(err: unknown): boolean {
   if (e?.status && e.status >= 500 && e.status < 600) return true;
   const msg = String(e?.message ?? err).toLowerCase();
   return (
-    msg.includes('quota') ||
-    msg.includes('overloaded') ||
-    msg.includes('rate limit') ||
-    msg.includes('unavailable') ||
-    msg.includes('timeout') ||
-    msg.includes('429') ||
-    msg.includes('503')
+    msg.includes("quota") ||
+    msg.includes("overloaded") ||
+    msg.includes("rate limit") ||
+    msg.includes("unavailable") ||
+    msg.includes("timeout") ||
+    msg.includes("429") ||
+    msg.includes("503")
   );
 }
 
@@ -92,11 +95,13 @@ async function callFeedbackModel(
   ai: GoogleGenAI,
   groqApiKey: string | undefined,
   model: FeedbackModel,
-  recentTranscript: string
+  recentTranscript: string,
 ): Promise<string | undefined> {
   if (isGroq(model)) {
     if (!groqApiKey) {
-      const err = Object.assign(new Error('GROQ_API_KEY is not configured'), { status: 401 });
+      const err = Object.assign(new Error("GROQ_API_KEY is not configured"), {
+        status: 401,
+      });
       throw err;
     }
     const schemaPrompt = `
@@ -108,29 +113,36 @@ You MUST return a JSON object that matches the following structure:
 }
 Return an array with maximum 3 items.
 `;
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${groqApiKey}`,
-        'Content-Type': 'application/json',
+    const response = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${groqApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: FEEDBACK_SYSTEM_PROMPT + "\n\n" + schemaPrompt,
+            },
+            { role: "user", content: recentTranscript },
+          ],
+          temperature: 0.5,
+          max_tokens: 200,
+          response_format: { type: "json_object" },
+        }),
       },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: FEEDBACK_SYSTEM_PROMPT + '\n\n' + schemaPrompt },
-          { role: 'user', content: recentTranscript },
-        ],
-        temperature: 0.5,
-        max_tokens: 200,
-        response_format: { type: 'json_object' },
-      }),
-    });
+    );
     if (!response.ok) {
       const errText = await response.text();
-      const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`),
+      const err = Object.assign(
+        new Error(`Groq API error: ${response.status} ${errText}`),
         {
-          status: response.status
-        }
+          status: response.status,
+        },
       );
       throw err;
     }
@@ -144,11 +156,11 @@ Return an array with maximum 3 items.
       systemInstruction: FEEDBACK_SYSTEM_PROMPT,
       temperature: 0.5,
       maxOutputTokens: 200,
-      responseMimeType: 'application/json',
+      responseMimeType: "application/json",
       responseSchema: FEEDBACK_SCHEMA,
       thinkingConfig: { thinkingBudget: 0 },
     },
-    contents: [{ role: 'user', parts: [{ text: recentTranscript }] }],
+    contents: [{ role: "user", parts: [{ text: recentTranscript }] }],
   });
   return response.text;
 }
@@ -157,18 +169,24 @@ export async function POST(req: Request): Promise<Response> {
   const apiKey = process.env.GOOGLE_API_KEY;
   const groqApiKey = process.env.GROQ_API_KEY;
   if (!apiKey && !groqApiKey) {
-    return jsonResponse({ ok: false, warning: 'API keys are not configured' }, 500);
+    return jsonResponse(
+      { ok: false, warning: "API keys are not configured" },
+      500,
+    );
   }
 
   let body: FeedbackRequest;
   try {
     body = (await req.json()) as FeedbackRequest;
   } catch {
-    return jsonResponse({ ok: false, warning: 'Invalid JSON body' }, 400);
+    return jsonResponse({ ok: false, warning: "Invalid JSON body" }, 400);
   }
 
-  if (!body.recent_transcript || typeof body.recent_transcript !== 'string') {
-    return jsonResponse({ ok: false, warning: 'Missing recent_transcript' }, 400);
+  if (!body.recent_transcript || typeof body.recent_transcript !== "string") {
+    return jsonResponse(
+      { ok: false, warning: "Missing recent_transcript" },
+      400,
+    );
   }
 
   const ai = apiKey ? new GoogleGenAI({ apiKey }) : ({} as GoogleGenAI);
@@ -180,7 +198,12 @@ export async function POST(req: Request): Promise<Response> {
 
   for (const model of FEEDBACK_MODELS) {
     try {
-      raw = await callFeedbackModel(ai, groqApiKey, model, body.recent_transcript);
+      raw = await callFeedbackModel(
+        ai,
+        groqApiKey,
+        model,
+        body.recent_transcript,
+      );
       usedModel = model;
       break;
     } catch (err) {
@@ -195,8 +218,11 @@ export async function POST(req: Request): Promise<Response> {
 
   if (!raw) {
     return jsonResponse(
-      { ok: false, warning: `Feedback error: ${(lastError as Error)?.message ?? 'unknown'}` },
-      503
+      {
+        ok: false,
+        warning: `Feedback error: ${(lastError as Error)?.message ?? "unknown"}`,
+      },
+      503,
     );
   }
 
@@ -204,14 +230,22 @@ export async function POST(req: Request): Promise<Response> {
   try {
     parsed = JSON.parse(extractJsonFromText(raw));
   } catch {
-    return jsonResponse({ ok: false, warning: 'Feedback model returned invalid JSON' }, 200);
+    return jsonResponse(
+      { ok: false, warning: "Feedback model returned invalid JSON" },
+      200,
+    );
   }
 
   const validation = FeedbackPayloadSchema.safeParse(parsed);
   if (!validation.success) {
-    return jsonResponse({ ok: false, warning: 'Feedback schema validation failed' }, 200);
+    return jsonResponse(
+      { ok: false, warning: "Feedback schema validation failed" },
+      200,
+    );
   }
 
-  console.log(`[feedback-api] OK (${usedModel}) — ${validation.data.feedback.length} chip(s)`);
+  console.log(
+    `[feedback-api] OK (${usedModel}) — ${validation.data.feedback.length} chip(s)`,
+  );
   return jsonResponse({ ok: true, feedback: validation.data.feedback });
 }
