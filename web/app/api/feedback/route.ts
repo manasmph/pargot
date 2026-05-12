@@ -96,7 +96,7 @@ async function callFeedbackModel(
 ): Promise<string | undefined> {
   if (isGroq(model)) {
     if (!groqApiKey) {
-      const err = Object.assign(new Error(), { status:  });
+      const err = Object.assign(new Error('GROQ_API_KEY is not configured'), { status: 401 });
       throw err;
     }
     const schemaPrompt = `
@@ -127,7 +127,7 @@ Return an array with maximum 3 items.
     });
     if (!response.ok) {
       const errText = await response.text();
-      const err = Object.assign(new Error(), { status:  });
+      const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`), { status: response.status });
       throw err;
     }
     const json = await response.json();

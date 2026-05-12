@@ -127,7 +127,7 @@ You MUST return a JSON object that matches the following structure:
         });
         if (!response.ok) {
           const errText = await response.text();
-          const err = Object.assign(new Error(), { status:  });
+          const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`), { status: response.status });
           throw err;
         }
         const json = await response.json();

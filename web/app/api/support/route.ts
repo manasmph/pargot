@@ -249,7 +249,7 @@ async function callCoachModel(
 ): Promise<string | undefined> {
   if (isGroq(model)) {
     if (!groqApiKey) {
-      const err = Object.assign(new Error(), { status:  }); // permanent error
+      const err = Object.assign(new Error('GROQ_API_KEY is not configured'), { status: 401 }); // permanent error
       throw err;
     }
     const schemaPrompt = `
@@ -282,7 +282,7 @@ You MUST return a JSON object that matches the following structure:
 
     if (!response.ok) {
       const errText = await response.text();
-      const err = Object.assign(new Error(), { status:  });
+      const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`), { status: response.status });
       throw err;
     }
 
@@ -410,7 +410,7 @@ async function probeModel(
       });
       if (!response.ok) {
         const errText = await response.text();
-        const err = Object.assign(new Error(), { status:  });
+        const err = Object.assign(new Error(`Groq probe failed: ${response.status} ${errText}`), { status: response.status });
         throw err;
       }
     } else {
@@ -505,7 +505,7 @@ export async function GET(): Promise<Response> {
         });
         if (!response.ok) {
           const errText = await response.text();
-          const err = Object.assign(new Error(), { status:  });
+          const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`), { status: response.status });
           throw err;
         }
       } else {
