@@ -282,7 +282,11 @@ You MUST return a JSON object that matches the following structure:
 
     if (!response.ok) {
       const errText = await response.text();
-      const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`), { status: response.status });
+      const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`),
+        {
+          status: response.status
+        }
+      );
       throw err;
     }
 
@@ -410,7 +414,11 @@ async function probeModel(
       });
       if (!response.ok) {
         const errText = await response.text();
-        const err = Object.assign(new Error(`Groq probe failed: ${response.status} ${errText}`), { status: response.status });
+        const err = Object.assign(new Error(`Groq probe failed: ${response.status} ${errText}`),
+          {
+            status: response.status
+          }
+        );
         throw err;
       }
     } else {
@@ -505,7 +513,11 @@ export async function GET(): Promise<Response> {
         });
         if (!response.ok) {
           const errText = await response.text();
-          const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`), { status: response.status });
+          const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`),
+            {
+              status: response.status
+            }
+          );
           throw err;
         }
       } else {
@@ -578,8 +590,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   console.log(
-    `[support-api] request — transcript ${recent_transcript.length} chars, prior=${
-      prior ? `${prior.framework_id}/${prior.current_stage_id}` : 'none'
+    `[support-api] request — transcript ${recent_transcript.length} chars, prior=${prior ? `${prior.framework_id}/${prior.current_stage_id}` : 'none'
     }, available=${Object.entries(modelAvailability)
       .filter(([, v]) => v)
       .map(([k]) => k)
@@ -719,7 +730,7 @@ export async function POST(req: Request): Promise<Response> {
 
   console.log(
     `[support-api] OK (${usedModel}) — ${update.framework_id}/${update.current_stage_id}, ` +
-      `${update.done_cue_ids.length} cues done`
+    `${update.done_cue_ids.length} cues done`
   );
 
   // Type assertion: `framework_id` was narrowed to FrameworkId by the catalog

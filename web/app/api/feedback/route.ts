@@ -127,7 +127,11 @@ Return an array with maximum 3 items.
     });
     if (!response.ok) {
       const errText = await response.text();
-      const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`), { status: response.status });
+      const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`),
+        {
+          status: response.status
+        }
+      );
       throw err;
     }
     const json = await response.json();

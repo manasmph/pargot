@@ -127,7 +127,11 @@ You MUST return a JSON object that matches the following structure:
         });
         if (!response.ok) {
           const errText = await response.text();
-          const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`), { status: response.status });
+          const err = Object.assign(new Error(`Groq API error: ${response.status} ${errText}`),
+            {
+              status: response.status
+            }
+          );
           throw err;
         }
         const json = await response.json();
@@ -177,8 +181,7 @@ You MUST return a JSON object that matches the following structure:
 
   const result: ClassifyTurnResult = validation.data;
   console.log(
-    `[classify-api] is_new=${result.is_new_question} conf=${result.confidence.toFixed(2)}${
-      result.reason ? ` — ${result.reason}` : ''
+    `[classify-api] is_new=${result.is_new_question} conf=${result.confidence.toFixed(2)}${result.reason ? ` — ${result.reason}` : ''
     }`
   );
   return jsonResponse({ ok: true, result });
