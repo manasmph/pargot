@@ -3,18 +3,34 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSessionContext, useSessionMessages } from '@livekit/components-react';
 import type {
+  ClassifyTurnResponse,
   CoachErrorCode,
   CoachPrior,
   CoachResponse,
   CoachState,
   CoachUpdate,
+  FeedbackItem,
+  FeedbackResponse,
   FrameworkDef,
+  FrameworkId,
 } from '@/lib/coach-types';
 import { getFramework } from '@/lib/frameworks';
 
 /**
- * Watches the LiveKit session transcript and asks the support model to
- * update the coach panel whenever the interviewer (agent) finishes a turn.
+ * Watches the LiveKit session transcript and orchestrates three parallel
+ * backend calls on every agent turn:
+ *
+ *  1. /api/support       — slow (~1.5–2.5 s) — coach state (framework, stages, cues).
+ *  2. /api/feedback      — fast (~500–700 ms) — feedback chips for the latest answer.
+ *  3. /api/classify-turn — fast (~400–600 ms) — "did the interviewer pivot to a
+ *                          new question?" signal for framework unlock.
+ *
+ * Feedback chips are applied to state as soon as /api/feedback returns,
+ * so the user sees them in roughly half the time of the full /api/support
+ * call. When the classifier flags a new question with confidence > 0.7,
+ * the hook pushes the current CoachState onto a history stack, resets the
+ * framework lock, and re-fires /api/support without a prior. The next
+ * answer will arrive on a fresh framework.
  *
  * Returns the fully-hydrated `CoachState` ready for the stepper UI to render.
  */
@@ -22,6 +38,7 @@ import { getFramework } from '@/lib/frameworks';
 const DEBOUNCE_MS = 900;
 const TRANSCRIPT_WINDOW = 6; // last 6 turns considered for `recent_transcript`
 const TRANSCRIPT_MAX_CHARS = 1500; // hard cap so a long monologue can't blow up prompt cost
+const NEW_QUESTION_THRESHOLD = 0.7; // classifier confidence required to unlock the framework
 
 // Internal LiveKit message shape (we only read a few fields and stay loose).
 type LkMessage = {
@@ -47,30 +64,26 @@ function lastAgentMessage(messages: LkMessage[]): LkMessage | undefined {
 }
 
 function buildRecentTranscript(messages: LkMessage[], window = TRANSCRIPT_WINDOW): string {
-  // Build the candidate line-list, newest at the end.
   const lines = messages.slice(-window).map((m) => {
     const role = isAgentMessage(m) ? 'Interviewer' : 'Candidate';
     return `${role}: ${m.message ?? ''}`;
   });
 
-  // Drop oldest lines until the total stays within TRANSCRIPT_MAX_CHARS.
-  // We keep at least one line so the model always sees the most recent turn.
   while (lines.length > 1 && lines.join('\n').length > TRANSCRIPT_MAX_CHARS) {
     lines.shift();
   }
   return lines.join('\n');
 }
 
-/**
- * Hash combines message id + text length so we re-fetch when the model
- * back-fills or corrects the transcript on a previously-seen message id
- * (LiveKit can revise transcripts mid-utterance).
- */
 function transcriptHash(messages: LkMessage[]): string {
   return messages.map((m) => `${m.id}:${m.message?.length ?? 0}`).join('|');
 }
 
-function mergeUpdate(update: CoachUpdate, framework: FrameworkDef): CoachState {
+function mergeUpdate(
+  update: CoachUpdate,
+  framework: FrameworkDef,
+  feedback: FeedbackItem[]
+): CoachState {
   const doneCueIds = new Set(update.done_cue_ids);
   const completedStageIds = new Set(update.completed_stage_ids);
 
@@ -98,7 +111,7 @@ function mergeUpdate(update: CoachUpdate, framework: FrameworkDef): CoachState {
         hint: update.hint?.stage_id === stage.id ? update.hint.text : undefined,
       };
     }),
-    feedback: update.feedback,
+    feedback,
   };
 }
 
@@ -112,6 +125,67 @@ function buildPrior(state: CoachState): CoachPrior {
   };
 }
 
+// ─── Fetch helpers (each soft-fails to a typed null) ──────────────────────
+
+async function fetchSupport(
+  recentTranscript: string,
+  prior: CoachPrior | undefined,
+  signal: AbortSignal
+): Promise<CoachResponse | null> {
+  try {
+    const res = await fetch('/api/support', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recent_transcript: recentTranscript, prior }),
+      signal,
+    });
+    return (await res.json()) as CoachResponse;
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') return null;
+    return { ok: false, code: 'unknown', warning: `Network error: ${(err as Error).message}` };
+  }
+}
+
+async function fetchFeedback(
+  recentTranscript: string,
+  signal: AbortSignal
+): Promise<FeedbackResponse | null> {
+  try {
+    const res = await fetch('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recent_transcript: recentTranscript }),
+      signal,
+    });
+    return (await res.json()) as FeedbackResponse;
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') return null;
+    return { ok: false, warning: `Network error: ${(err as Error).message}` };
+  }
+}
+
+async function fetchClassify(
+  recentTranscript: string,
+  priorFrameworkId: FrameworkId | undefined,
+  signal: AbortSignal
+): Promise<ClassifyTurnResponse | null> {
+  try {
+    const res = await fetch('/api/classify-turn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recent_transcript: recentTranscript,
+        prior_framework_id: priorFrameworkId,
+      }),
+      signal,
+    });
+    return (await res.json()) as ClassifyTurnResponse;
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') return null;
+    return { ok: false, warning: `Network error: ${(err as Error).message}` };
+  }
+}
+
 // ─── Hook ─────────────────────────────────────────────────────────────────
 
 export function useSupportCues() {
@@ -122,31 +196,26 @@ export function useSupportCues() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<CoachErrorCode | null>(null);
-  // Tentative-state flag (Phase 2.3). True when the server salvaged a
-  // framework_id from a schema-invalid response and emitted a stub
-  // CoachUpdate. UI shows a soft "tentative" indicator while this is set;
-  // the next successful response clears it.
   const [isPartial, setIsPartial] = useState(false);
 
-  // Refs that survive re-renders. Critical: `timerRef` outlives the messages
-  // effect's cleanup so a debounced fetch isn't cancelled when an unrelated
-  // user transcript lands within the debounce window.
   const stateRef = useRef<CoachState | null>(null);
   const lastTranscriptHashRef = useRef<string | null>(null);
   const lastAgentIdRef = useRef<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Phase 3.2 — history stack of past CoachStates. Each entry is a framework
+  // the candidate has completed (interviewer pivoted away from it). Surfaced
+  // by future review-screen work; for now we just keep the slot so old state
+  // isn't lost when we reset on new-question detection.
+  const historyRef = useRef<CoachState[]>([]);
+  // Most recent feedback chips for the in-flight turn. Lets feedback render
+  // as soon as /api/feedback resolves, even before /api/support catches up.
+  const pendingFeedbackRef = useRef<FeedbackItem[] | null>(null);
 
-  // Keep `stateRef` in sync with state so the fetch can read the latest
-  // value without the effect re-firing.
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
 
-  // Reset everything whenever the LiveKit session disconnects (the user
-  // ended the interview and is back at the welcome screen). When a new
-  // interview starts, the panel begins fresh — no stale framework, no
-  // stale ticks, no stale prior sent to the model.
   useEffect(() => {
     if (isConnected) return;
     console.log('[support] session disconnected — resetting coach state');
@@ -155,6 +224,8 @@ export function useSupportCues() {
     stateRef.current = null;
     lastAgentIdRef.current = null;
     lastTranscriptHashRef.current = null;
+    historyRef.current = [];
+    pendingFeedbackRef.current = null;
     setState(null);
     setIsLoading(false);
     setError(null);
@@ -162,7 +233,6 @@ export function useSupportCues() {
     setIsPartial(false);
   }, [isConnected]);
 
-  // Cleanup on unmount.
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
@@ -170,7 +240,6 @@ export function useSupportCues() {
     };
   }, []);
 
-  // Debug: log every time messages change.
   useEffect(() => {
     if (messages.length === 0) return;
     console.log(
@@ -184,7 +253,6 @@ export function useSupportCues() {
     );
   }, [messages]);
 
-  // ── Main effect: fire whenever the latest agent message changes ─────────
   useEffect(() => {
     if (messages.length === 0) return;
 
@@ -193,9 +261,6 @@ export function useSupportCues() {
     if (!agentMsg) return;
 
     const hash = transcriptHash(lkMessages);
-
-    // Skip re-fetch unless either (a) the latest agent id changed, or
-    // (b) the transcript text shifted (LiveKit revised an in-flight message).
     if (agentMsg.id === lastAgentIdRef.current && hash === lastTranscriptHashRef.current) {
       return;
     }
@@ -203,7 +268,6 @@ export function useSupportCues() {
     lastAgentIdRef.current = agentMsg.id;
     lastTranscriptHashRef.current = hash;
 
-    // Cancel any pending timer / in-flight request.
     if (timerRef.current) clearTimeout(timerRef.current);
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -217,73 +281,116 @@ export function useSupportCues() {
     );
 
     const recentTranscript = buildRecentTranscript(lkMessages);
-    const prior = stateRef.current ? buildPrior(stateRef.current) : undefined;
+    const initialPrior = stateRef.current ? buildPrior(stateRef.current) : undefined;
 
-    async function fetchCoach() {
+    async function orchestrate() {
       setIsLoading(true);
       setError(null);
       setErrorCode(null);
+      // Reset feedback ref at the start of each turn — chips from the
+      // previous turn should clear immediately so they don't linger
+      // misleadingly while the new ones are fetched.
+      pendingFeedbackRef.current = null;
 
-      console.log('[support] calling /api/support, prior=', prior?.framework_id ?? 'none');
+      console.log(
+        '[support] firing parallel calls (support/feedback/classify), prior=',
+        initialPrior?.framework_id ?? 'none'
+      );
 
-      try {
-        const res = await fetch('/api/support', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ recent_transcript: recentTranscript, prior }),
-          signal: controller.signal,
-        });
+      // Fire all three in parallel.
+      const supportPromise = fetchSupport(recentTranscript, initialPrior, controller.signal);
+      const feedbackPromise = fetchFeedback(recentTranscript, controller.signal);
+      const classifyPromise = fetchClassify(
+        recentTranscript,
+        initialPrior?.framework_id,
+        controller.signal
+      );
 
-        // The server returns JSON with a CoachResponse body even on 4xx/5xx
-        // when it's a structured failure (e.g. 429 rate-limited). Try to parse
-        // first, fall back to a generic error if the body isn't JSON.
-        let payload: CoachResponse | null = null;
-        try {
-          payload = (await res.json()) as CoachResponse;
-        } catch {
-          /* body wasn't JSON */
+      // Feedback resolves fast — patch chips as soon as it arrives so the
+      // user sees critique while the slower support call is still in flight.
+      feedbackPromise.then((fbResult) => {
+        if (controller.signal.aborted) return;
+        if (!fbResult || !fbResult.ok) return;
+        pendingFeedbackRef.current = fbResult.feedback;
+        if (stateRef.current) {
+          setState({ ...stateRef.current, feedback: fbResult.feedback });
         }
+        console.log(`[support] feedback ready — ${fbResult.feedback.length} chip(s)`);
+      });
 
-        if (!payload) {
-          console.error('[support] /api/support returned non-JSON body, status', res.status);
-          setError(`API error ${res.status}`);
-          setErrorCode('unknown');
-          return;
+      // ── Apply support response AS SOON AS IT LANDS ──
+      // Critical: do NOT gate cues on the classifier. If classify is slow
+      // (or briefly stalls under traffic), cues would wait — that's what
+      // made the panel feel "super late" in the first orchestration pass.
+      // The classifier is consulted afterwards, post-hoc; if it says "new
+      // question", we animate a framework swap then.
+      const supportResult = await supportPromise;
+      if (controller.signal.aborted) return;
+      if (!supportResult) return;
+
+      if (!supportResult.ok) {
+        console.warn(`[support] soft failure (${supportResult.code}):`, supportResult.warning);
+        setError(supportResult.warning);
+        setErrorCode(supportResult.code);
+        if (pendingFeedbackRef.current && stateRef.current) {
+          setState({ ...stateRef.current, feedback: pendingFeedbackRef.current });
         }
-
-        if (!payload.ok) {
-          console.warn(`[support] soft failure (${payload.code}):`, payload.warning);
-          setError(payload.warning);
-          setErrorCode(payload.code);
-          // NOTE: we do NOT clear `state` here. Keeping the prior stepper
-          // visible while we surface a banner is friendlier than blanking
-          // the panel on a transient rate-limit.
-          return;
-        }
-
-        const framework = getFramework(payload.update.framework_id);
-        const next = mergeUpdate(payload.update, framework);
-        setState(next);
-        setIsPartial(Boolean(payload.partial));
-        console.log(
-          `[support] state updated — ${framework.id}/${payload.update.current_stage_id}, ${payload.update.done_cue_ids.length} cues done${payload.partial ? ' (tentative)' : ''}`
-        );
-      } catch (err) {
-        if ((err as Error).name === 'AbortError') return;
-        console.error('[support] fetch error:', err);
-        setError(`Error: ${(err as Error).message}`);
-        setErrorCode('unknown');
-      } finally {
-        setIsLoading(false);
+        return;
       }
+
+      const framework = getFramework(supportResult.update.framework_id);
+      const initialFeedback = pendingFeedbackRef.current ?? stateRef.current?.feedback ?? [];
+      const initialState = mergeUpdate(supportResult.update, framework, initialFeedback);
+      setState(initialState);
+      setIsPartial(Boolean(supportResult.partial));
+      setIsLoading(false); // cues visible NOW
+
+      console.log(
+        `[support] state updated — ${framework.id}/${supportResult.update.current_stage_id}, ${supportResult.update.done_cue_ids.length} cues done${supportResult.partial ? ' (tentative)' : ''}`
+      );
+
+      // ── Now wait for classifier in the background (cues already showing) ──
+      const classifyResult = await classifyPromise;
+      if (controller.signal.aborted) return;
+
+      const isNewQuestion =
+        classifyResult?.ok === true &&
+        classifyResult.result.is_new_question &&
+        classifyResult.result.confidence > NEW_QUESTION_THRESHOLD &&
+        // Only meaningful if we HAD a prior — first turn can't be a "new question".
+        initialPrior !== undefined;
+
+      if (!isNewQuestion) return;
+
+      // ── New question detected — push history and re-fetch w/o prior ──
+      // The old framework stays visible during this re-fetch (no setState(null))
+      // so the user sees a clean animated swap when the new framework arrives.
+      console.log(
+        `[support] new question detected (conf=${classifyResult!.ok ? classifyResult!.result.confidence.toFixed(2) : '?'}) — unlocking framework + re-fetching`
+      );
+      historyRef.current.push(initialState);
+      pendingFeedbackRef.current = [];
+      setIsLoading(true); // pending dot on the (still-visible) old framework
+
+      const freshResult = await fetchSupport(recentTranscript, undefined, controller.signal);
+      if (controller.signal.aborted) return;
+      if (!freshResult || !freshResult.ok) {
+        console.warn('[support] re-fetch after new-question failed — keeping old framework');
+        return;
+      }
+
+      const freshFramework = getFramework(freshResult.update.framework_id);
+      const freshState = mergeUpdate(freshResult.update, freshFramework, []);
+      setState(freshState);
+      setIsPartial(Boolean(freshResult.partial));
+      console.log(`[support] framework swapped — ${framework.id} → ${freshFramework.id}`);
     }
 
-    timerRef.current = setTimeout(fetchCoach, DEBOUNCE_MS);
-
-    // ── NO cleanup return ─────────────────────────────────────────────────
-    // The debounced timer must survive re-renders triggered by subsequent
-    // user-transcript messages arriving inside the debounce window.
-    // Unmount cleanup is handled by the separate effect above.
+    timerRef.current = setTimeout(() => {
+      orchestrate().finally(() => {
+        if (!controller.signal.aborted) setIsLoading(false);
+      });
+    }, DEBOUNCE_MS);
   }, [messages]);
 
   return { state, isLoading, error, errorCode, isPartial };

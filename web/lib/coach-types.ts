@@ -40,8 +40,20 @@ export interface FrameworkDef {
 }
 
 /**
+ * Single piece of per-turn coaching feedback. Sourced from `/api/feedback`
+ * (Phase 3.3) — no longer part of CoachUpdate so the slow support call
+ * stays purely about cue / stage tracking.
+ */
+export interface FeedbackItem {
+  tone: 'positive' | 'warning' | 'info';
+  text: string;
+}
+
+/**
  * The exact JSON shape the support model returns, validated by Zod.
  * NEVER contains free-form stage or cue *text* — only IDs + flags.
+ * Feedback was split out into its own endpoint in Phase 3.3 so the slow
+ * structured-state call doesn't gate fast critique display.
  */
 export interface CoachUpdate {
   framework_id: FrameworkId;
@@ -51,11 +63,6 @@ export interface CoachUpdate {
   done_cue_ids: string[];
   /** Optional model-generated guidance for the current stage. */
   hint?: { stage_id: string; text: string };
-  /** Up to 3 ephemeral feedback items about the candidate's last answer. */
-  feedback: Array<{
-    tone: 'positive' | 'warning' | 'info';
-    text: string;
-  }>;
 }
 
 /**
@@ -83,7 +90,8 @@ export interface CoachState {
     cues: Array<{ id: string; text: string; done: boolean }>;
     hint?: string;
   }>;
-  feedback: CoachUpdate['feedback'];
+  /** Latest 1-3 feedback chips, sourced from `/api/feedback`. */
+  feedback: FeedbackItem[];
 }
 
 /**
@@ -114,3 +122,40 @@ export type CoachErrorCode =
 export type CoachResponse =
   | { ok: true; update: CoachUpdate; partial?: boolean }
   | { ok: false; code: CoachErrorCode; warning: string };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 3.3 — /api/feedback
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Server response shape from /api/feedback. Soft-fails to `ok: false`. */
+export type FeedbackResponse =
+  | { ok: true; feedback: FeedbackItem[] }
+  | { ok: false; warning: string };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 3.1 — /api/classify-turn
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Request body for the new-question classifier. Sent in parallel with
+ * `/api/support` so we can decide whether to keep the framework locked
+ * or reset it when the interviewer pivots to a different question.
+ */
+export interface ClassifyTurnRequest {
+  recent_transcript: string;
+  prior_framework_id?: FrameworkId;
+}
+
+/**
+ * Classifier response. `is_new_question: true` with `confidence > 0.7`
+ * triggers a framework unlock in the hook (Phase 3.2).
+ */
+export interface ClassifyTurnResult {
+  is_new_question: boolean;
+  confidence: number;
+  reason?: string;
+}
+
+export type ClassifyTurnResponse =
+  | { ok: true; result: ClassifyTurnResult }
+  | { ok: false; warning: string };

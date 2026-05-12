@@ -66,24 +66,10 @@ const COACH_UPDATE_SCHEMA: Schema = {
       required: ['stage_id', 'text'],
       description: 'Optional ≤25-word nudge for the current stage.',
     },
-    feedback: {
-      type: Type.ARRAY,
-      maxItems: '3',
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          tone: {
-            type: Type.STRING,
-            enum: ['positive', 'warning', 'info'],
-          },
-          text: { type: Type.STRING },
-        },
-        required: ['tone', 'text'],
-      },
-      description: 'Up to 3 ephemeral feedback items about the latest answer.',
-    },
+    // Phase 3.3 — feedback split off to /api/feedback so this slow
+    // structured-state call doesn't gate fast critique display.
   },
-  required: ['framework_id', 'current_stage_id', 'completed_stage_ids', 'done_cue_ids', 'feedback'],
+  required: ['framework_id', 'current_stage_id', 'completed_stage_ids', 'done_cue_ids'],
 };
 
 // ─── Model availability + background quota probing ──────────────────────
@@ -91,11 +77,14 @@ const COACH_UPDATE_SCHEMA: Schema = {
 // Three-tier fallback chain:
 //   1. gemini-2.5-flash         — fastest + best at structured output
 //   2. gemini-3.1-flash-lite    — when 2.5 is rate-limited
-//   3. gemma-4-26b-it           — open-weights backstop when both Geminis are
-//                                 exhausted. NOTE: Gemma on the Gemini API
-//                                 does NOT support responseSchema /
-//                                 systemInstruction / thinkingConfig, so it
-//                                 takes a different request shape.
+//   3. gemma-4-26b-a4b-it       — open-weights backstop when both Geminis are
+//                                 exhausted. Gemma 4 (released Apr 2026) is a
+//                                 26B-total / 4B-active Mixture-of-Experts
+//                                 model. Unlike Gemma 3, it natively supports
+//                                 systemInstruction and structured-output JSON
+//                                 — so the request shape matches the Gemini
+//                                 models exactly except we omit thinkingConfig
+//                                 (Gemma has no thinking mode).
 //
 // Goal: no extra user-facing latency once a model has been rate-limited.
 //
@@ -115,7 +104,7 @@ const COACH_UPDATE_SCHEMA: Schema = {
 //      If the probe succeeds, the model is marked available again — the
 //      next user request automatically picks the highest-priority one.
 
-const MODELS = ['gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemma-4-26b-it'] as const;
+const MODELS = ['gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it', 'openai/gpt-oss-120b'] as const;
 type Model = (typeof MODELS)[number];
 
 // Probe cadence is category-driven: quota windows are minutes-long so probe
@@ -126,7 +115,8 @@ const FAST_PROBE_MS = 30_000; // 30 s
 const modelAvailability: Record<Model, boolean> = {
   'gemini-2.5-flash': true,
   'gemini-3.1-flash-lite': true,
-  'gemma-4-26b-it': true,
+  'gemma-4-26b-a4b-it': true,
+  'openai/gpt-oss-120b': true,
 };
 const probeTimers = new Map<Model, ReturnType<typeof setTimeout>>();
 
@@ -151,6 +141,10 @@ function nextAvailableModel(current: Model): Model | null {
 
 function isGemma(model: string): boolean {
   return model.startsWith('gemma');
+}
+
+function isGroq(model: string): boolean {
+  return model === 'openai/gpt-oss-120b';
 }
 
 /**
@@ -235,30 +229,62 @@ function errorCodeFor(c: FailureCategory): CoachErrorCode {
 }
 
 /**
- * Gemma models on the Gemini API don't support `systemInstruction`,
- * `responseSchema`, or `thinkingConfig`. Fold the system prompt into the
- * user message and ask for JSON-only output. Robust JSON extraction
- * happens client-side via `extractJsonFromText`.
+ * Single request shape works for both Gemini and Gemma 4 — both support
+ * `systemInstruction` and structured-output `responseSchema` natively.
+ * The only model-specific divergence: `thinkingConfig` exists on Gemini
+ * 2.5+ (we set thinkingBudget=0 to keep latency tight) but isn't a
+ * concept on Gemma, so we omit it for Gemma models.
  */
-const GEMMA_JSON_DIRECTIVE = `\n\n----\n\nRespond with ONLY a single JSON object matching the schema in the instructions above. No prose before or after, no markdown code fences.`;
-
 async function callCoachModel(
   ai: GoogleGenAI,
+  groqApiKey: string | undefined,
   model: Model,
   systemInstruction: string,
   recentTranscript: string
 ): Promise<string | undefined> {
-  if (isGemma(model)) {
-    const userText = `${systemInstruction}\n\n----\n\nTranscript:\n${recentTranscript}${GEMMA_JSON_DIRECTIVE}`;
-    const response = await ai.models.generateContent({
-      model,
-      config: {
-        temperature: 0.4,
-        maxOutputTokens: 1024,
+  if (isGroq(model)) {
+    if (!groqApiKey) {
+      const err = new Error('GROQ_API_KEY is not configured');
+      (err as any).status = 401; // permanent error
+      throw err;
+    }
+    const schemaPrompt = `
+You MUST return a JSON object that matches the following structure:
+{
+  "framework_id": "string",
+  "current_stage_id": "string",
+  "completed_stage_ids": ["string"], // array of strings
+  "done_cue_ids": ["string"], // array of strings
+  "hint": { "stage_id": "string", "text": "string" } // hint is optional, can be null or omitted
+}
+`;
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${groqApiKey}`,
+        'Content-Type': 'application/json',
       },
-      contents: [{ role: 'user', parts: [{ text: userText }] }],
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemInstruction + '\n\n' + schemaPrompt },
+          { role: 'user', content: recentTranscript },
+        ],
+        temperature: 0.4,
+        max_tokens: 1024,
+        response_format: { type: 'json_object' },
+      }),
     });
-    return response.text;
+
+    if (!response.ok) {
+      const errText = await response.text();
+      const err = new Error(`Groq API error: ${response.status} ${errText}`);
+      (err as any).status = response.status;
+      throw err;
+    }
+
+    const json = await response.json();
+    return json.choices?.[0]?.message?.content;
   }
 
   const response = await ai.models.generateContent({
@@ -269,10 +295,7 @@ async function callCoachModel(
       maxOutputTokens: 1024,
       responseMimeType: 'application/json',
       responseSchema: COACH_UPDATE_SCHEMA,
-      // Disable thinking to keep latency tight — Coach updates need to land
-      // before the candidate's next utterance. (No-op on Lite models, which
-      // don't support thinking anyway.)
-      thinkingConfig: { thinkingBudget: 0 },
+      ...(isGemma(model) ? {} : { thinkingConfig: { thinkingBudget: 0 } }),
     },
     contents: [{ role: 'user', parts: [{ text: recentTranscript }] }],
   });
@@ -324,7 +347,6 @@ function buildTentativeUpdate(frameworkId: FrameworkId): CoachUpdate {
     current_stage_id: fw.stages[0].id,
     completed_stage_ids: [],
     done_cue_ids: [],
-    feedback: [],
   };
 }
 
@@ -334,7 +356,7 @@ function buildTentativeUpdate(frameworkId: FrameworkId): CoachUpdate {
  * brief 503 overloads don't get stuck behind a 2-minute quota timer.
  * Idempotent — calling twice for the same model keeps the existing timer.
  */
-function markUnavailable(model: Model, apiKey: string, category: FailureCategory): void {
+function markUnavailable(model: Model, apiKey: string, groqApiKey: string | undefined, category: FailureCategory): void {
   modelAvailability[model] = false;
   if (probeTimers.has(model)) return;
   const probeIn = probeDelayFor(category);
@@ -343,7 +365,7 @@ function markUnavailable(model: Model, apiKey: string, category: FailureCategory
   );
   const timer = setTimeout(() => {
     probeTimers.delete(model);
-    void probeModel(model, apiKey);
+    void probeModel(model, apiKey, groqApiKey);
   }, probeIn);
   probeTimers.set(model, timer);
 }
@@ -357,19 +379,41 @@ function markUnavailable(model: Model, apiKey: string, category: FailureCategory
  * failures (e.g. invalid key) re-mark the model available so the next
  * real request surfaces the issue.
  */
-async function probeModel(model: Model, apiKey: string): Promise<void> {
+async function probeModel(model: Model, apiKey: string, groqApiKey: string | undefined): Promise<void> {
   console.log(`[support-api] probing ${model} for recovery`);
   try {
-    const ai = new GoogleGenAI({ apiKey });
-    // Gemma doesn't accept thinkingConfig — keep the probe minimal & shape-correct.
-    const config = isGemma(model)
-      ? { maxOutputTokens: 1 }
-      : { maxOutputTokens: 1, thinkingConfig: { thinkingBudget: 0 } };
-    await ai.models.generateContent({
-      model,
-      config,
-      contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
-    });
+    if (isGroq(model)) {
+      if (!groqApiKey) throw new Error('No GROQ_API_KEY');
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${groqApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 1,
+        }),
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        const err = new Error(`Groq probe failed: ${response.status} ${errText}`);
+        (err as any).status = response.status;
+        throw err;
+      }
+    } else {
+      const ai = new GoogleGenAI({ apiKey });
+      // Gemma doesn't accept thinkingConfig — keep the probe minimal & shape-correct.
+      const config = isGemma(model)
+        ? { maxOutputTokens: 1 }
+        : { maxOutputTokens: 1, thinkingConfig: { thinkingBudget: 0 } };
+      await ai.models.generateContent({
+        model,
+        config,
+        contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
+      });
+    }
     modelAvailability[model] = true;
     console.log(`[support-api] ${model} recovered — back in rotation`);
   } catch (err) {
@@ -388,7 +432,7 @@ async function probeModel(model: Model, apiKey: string): Promise<void> {
     );
     const timer = setTimeout(() => {
       probeTimers.delete(model);
-      void probeModel(model, apiKey);
+      void probeModel(model, apiKey, groqApiKey);
     }, delay);
     probeTimers.set(model, timer);
   }
@@ -421,29 +465,53 @@ function jsonResponse(payload: CoachResponse, status = 200): Response {
 
 export async function GET(): Promise<Response> {
   const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) {
-    console.error('[support-api] health: GOOGLE_API_KEY not set');
+  const groqApiKey = process.env.GROQ_API_KEY;
+  if (!apiKey && !groqApiKey) {
+    console.error('[support-api] health: No API keys set');
     return jsonResponse(
-      { ok: false, code: 'config', warning: 'GOOGLE_API_KEY is not configured' },
+      { ok: false, code: 'config', warning: 'API keys are not configured' },
       500
     );
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = apiKey ? new GoogleGenAI({ apiKey }) : ({} as GoogleGenAI);
   let activeModel = pickActiveModel();
   let lastError: unknown;
   let lastCategory: FailureCategory | undefined;
 
   for (let attempt = 0; attempt < MODELS.length; attempt++) {
     try {
-      const config = isGemma(activeModel)
-        ? { maxOutputTokens: 1 }
-        : { maxOutputTokens: 1, thinkingConfig: { thinkingBudget: 0 } };
-      await ai.models.generateContent({
-        model: activeModel,
-        config,
-        contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
-      });
+      if (isGroq(activeModel)) {
+        if (!groqApiKey) throw new Error('No GROQ_API_KEY configured');
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${groqApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: activeModel,
+            messages: [{ role: 'user', content: 'ping' }],
+            max_tokens: 1,
+          }),
+        });
+        if (!response.ok) {
+          const errText = await response.text();
+          const err = new Error(`Groq API error: ${response.status} ${errText}`);
+          (err as any).status = response.status;
+          throw err;
+        }
+      } else {
+        if (!apiKey) throw new Error('No GOOGLE_API_KEY configured');
+        const config = isGemma(activeModel)
+          ? { maxOutputTokens: 1 }
+          : { maxOutputTokens: 1, thinkingConfig: { thinkingBudget: 0 } };
+        await ai.models.generateContent({
+          model: activeModel,
+          config,
+          contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
+        });
+      }
       console.log(`[support-api] health OK via ${activeModel}`);
       return new Response(JSON.stringify({ ok: true, model: activeModel }), {
         headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' },
@@ -456,7 +524,7 @@ export async function GET(): Promise<Response> {
         console.error(`[support-api] health: ${activeModel} permanent failure:`, err);
         break;
       }
-      markUnavailable(activeModel, apiKey, category);
+      markUnavailable(activeModel, apiKey ?? '', groqApiKey, category);
       const next = nextAvailableModel(activeModel);
       if (!next) {
         console.warn(`[support-api] health: ${activeModel} ${category}, no fallback`);
@@ -481,10 +549,11 @@ export async function GET(): Promise<Response> {
 
 export async function POST(req: Request): Promise<Response> {
   const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) {
-    console.error('[support-api] GOOGLE_API_KEY not set');
+  const groqApiKey = process.env.GROQ_API_KEY;
+  if (!apiKey && !groqApiKey) {
+    console.error('[support-api] API keys not set');
     return jsonResponse(
-      { ok: false, code: 'config', warning: 'GOOGLE_API_KEY is not configured' },
+      { ok: false, code: 'config', warning: 'API keys are not configured' },
       500
     );
   }
@@ -513,7 +582,7 @@ export async function POST(req: Request): Promise<Response> {
       .join('/')}`
   );
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = apiKey ? new GoogleGenAI({ apiKey }) : ({} as GoogleGenAI);
   const systemInstruction = buildSupportSystemPrompt(prior);
 
   // Walk the model chain: try the first available model; on a retryable
@@ -527,7 +596,7 @@ export async function POST(req: Request): Promise<Response> {
 
   for (let attempt = 0; attempt < MODELS.length; attempt++) {
     try {
-      raw = await callCoachModel(ai, usedModel, systemInstruction, recent_transcript);
+      raw = await callCoachModel(ai, groqApiKey, usedModel, systemInstruction, recent_transcript);
       break; // success
     } catch (err) {
       lastError = err;
@@ -539,7 +608,7 @@ export async function POST(req: Request): Promise<Response> {
         break;
       }
 
-      markUnavailable(usedModel, apiKey, category);
+      markUnavailable(usedModel, apiKey ?? '', groqApiKey, category);
       const next = nextAvailableModel(usedModel);
       if (!next) {
         console.warn(`[support-api] ${usedModel} ${category}, no fallback available`);
@@ -646,7 +715,7 @@ export async function POST(req: Request): Promise<Response> {
 
   console.log(
     `[support-api] OK (${usedModel}) — ${update.framework_id}/${update.current_stage_id}, ` +
-      `${update.done_cue_ids.length} cues done, ${update.feedback.length} feedback items`
+      `${update.done_cue_ids.length} cues done`
   );
 
   // Type assertion: `framework_id` was narrowed to FrameworkId by the catalog

@@ -1,6 +1,7 @@
 'use client';
 
 import { Hourglass, OctagonAlert, Sparkles, TriangleAlert } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { FeedbackList } from '@/components/app/coach/feedback-list';
 import { FrameworkStepper } from '@/components/app/coach/framework-stepper';
 import type { CoachErrorCode, CoachState } from '@/lib/coach-types';
@@ -101,25 +102,41 @@ export function SupportPanel({
 
         {hasState && (
           <div className={cn('space-y-4', hasError && 'mt-3')}>
-            <div
-              className={cn(
-                isPartial && 'rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2'
-              )}
-            >
-              <p className="text-muted-foreground text-[11px] tracking-wide uppercase">
-                {state.framework.questionType}
-              </p>
-              <h3 className="text-foreground mt-0.5 text-base font-semibold tracking-tight">
-                {state.framework.name}
-              </h3>
-              {isPartial && (
-                <p className="text-muted-foreground mt-1 text-[11px] leading-snug">
-                  Framework picked from a partial response. Cues will tick in on the next turn.
-                </p>
-              )}
-            </div>
+            {/* Header + stepper animate as a unit when the framework
+                switches mid-interview (Phase 3.2 — new-question unlock).
+                The AnimatePresence is keyed on framework.id; when it
+                changes, the old track slides out left, the new one slides
+                in from the right. */}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={state.framework.id}
+                initial={{ opacity: 0, x: 24 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -24 }}
+                transition={{ duration: 0.28, ease: 'easeOut' }}
+                className="space-y-4"
+              >
+                <div
+                  className={cn(
+                    isPartial && 'rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2'
+                  )}
+                >
+                  <p className="text-muted-foreground text-[11px] tracking-wide uppercase">
+                    {state.framework.questionType}
+                  </p>
+                  <h3 className="text-foreground mt-0.5 text-base font-semibold tracking-tight">
+                    {state.framework.name}
+                  </h3>
+                  {isPartial && (
+                    <p className="text-muted-foreground mt-1 text-[11px] leading-snug">
+                      Framework picked from a partial response. Cues will tick in on the next turn.
+                    </p>
+                  )}
+                </div>
 
-            <FrameworkStepper stages={state.stages} isPending={isLoading} />
+                <FrameworkStepper stages={state.stages} isPending={isLoading} />
+              </motion.div>
+            </AnimatePresence>
 
             {state.feedback.length > 0 && (
               <div className="border-border/60 space-y-2 border-t pt-3">
