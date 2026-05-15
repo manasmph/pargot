@@ -8,6 +8,20 @@
  */
 import type { CoachPrior } from './coach-types';
 import { FRAMEWORKS, FRAMEWORK_IDS } from './frameworks';
+import type { SeniorityId } from './interview-settings';
+
+// Seniority shifts how strictly the coach should tick cues. Same catalog,
+// same schema — only the model's "is this cue substantively addressed?"
+// judgement moves. Appended to the system instruction when present.
+const SENIORITY_CALIBRATION: Record<SeniorityId, string> = {
+  pm: 'Candidate is interviewing for a PM (mid-level / IC) role. Be generous with cue ticking — partial coverage of the cue counts as done.',
+  senior_pm:
+    'Candidate is interviewing for a Senior PM role. Tick a cue only when the candidate has substantively addressed it.',
+  staff_pm:
+    'Candidate is interviewing for a Staff PM role. Be strict — tick a cue only when the candidate shows depth, trade-offs, and ownership.',
+  principal_pm:
+    'Candidate is interviewing for a Group / Principal PM role. Be strict — tick cues only on rigorous coverage with quantification, trade-off articulation, and strategic framing.',
+};
 
 // ─── Role ──────────────────────────────────────────────────────────────────
 
@@ -131,7 +145,7 @@ Output:
 
 // ─── Public builder ───────────────────────────────────────────────────────
 
-export function buildSupportSystemPrompt(prior?: CoachPrior): string {
+export function buildSupportSystemPrompt(prior?: CoachPrior, seniority?: SeniorityId): string {
   const sections = [
     ROLE_INSTRUCTIONS,
     'Framework catalog:\n\n' + buildCatalogSummary(),
@@ -140,6 +154,10 @@ export function buildSupportSystemPrompt(prior?: CoachPrior): string {
     BEHAVIOUR_RULES,
     EXEMPLARS,
   ];
+
+  if (seniority && SENIORITY_CALIBRATION[seniority]) {
+    sections.push(`Seniority calibration:\n${SENIORITY_CALIBRATION[seniority]}`);
+  }
 
   if (prior) {
     sections.push(

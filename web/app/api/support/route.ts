@@ -25,6 +25,7 @@ import type {
   FrameworkId,
 } from '@/lib/coach-types';
 import { FRAMEWORKS, FRAMEWORK_IDS, getValidCueIds, getValidStageIds } from '@/lib/frameworks';
+import { SENIORITY_IDS, type SeniorityId } from '@/lib/interview-settings';
 import { buildSupportSystemPrompt } from '@/lib/support-prompt';
 
 export const runtime = 'nodejs';
@@ -462,6 +463,13 @@ async function probeModel(
 interface SupportRequest {
   recent_transcript: string;
   prior?: CoachPrior;
+  /**
+   * Optional candidate seniority — flows through to `buildSupportSystemPrompt`
+   * to calibrate cue-ticking strictness. Validated against the enum below;
+   * unknown values are silently dropped (request still succeeds with default
+   * model judgement).
+   */
+  seniority?: SeniorityId;
 }
 
 function jsonResponse(payload: CoachResponse, status = 200): Response {
@@ -587,17 +595,24 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
+  // Validate seniority against the known enum — silently drop unknown values
+  // rather than rejecting the request (the coach still works without it).
+  const seniority: SeniorityId | undefined =
+    body.seniority && (SENIORITY_IDS as readonly string[]).includes(body.seniority)
+      ? body.seniority
+      : undefined;
+
   console.log(
     `[support-api] request — transcript ${recent_transcript.length} chars, prior=${
       prior ? `${prior.framework_id}/${prior.current_stage_id}` : 'none'
-    }, available=${Object.entries(modelAvailability)
+    }, seniority=${seniority ?? 'unset'}, available=${Object.entries(modelAvailability)
       .filter(([, v]) => v)
       .map(([k]) => k)
       .join('/')}`
   );
 
   const ai = apiKey ? new GoogleGenAI({ apiKey }) : ({} as GoogleGenAI);
-  const systemInstruction = buildSupportSystemPrompt(prior);
+  const systemInstruction = buildSupportSystemPrompt(prior, seniority);
 
   // Walk the model chain: try the first available model; on a retryable
   // failure mark it unavailable, schedule a background probe, and try

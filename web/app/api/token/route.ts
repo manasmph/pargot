@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { AccessToken, type AccessTokenOptions, type VideoGrant } from 'livekit-server-sdk';
 import { RoomConfiguration } from '@livekit/protocol';
+import { parseInterviewSettings } from '@/lib/interview-settings';
 
 type ConnectionDetails = {
   serverUrl: string;
@@ -43,10 +44,20 @@ export async function POST(req: Request) {
     }
 
     // Parse room config from request body.
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const roomConfig = body?.room_config
       ? RoomConfiguration.fromJson(body.room_config, { ignoreUnknownFields: true })
       : new RoomConfiguration();
+
+    // Pre-interview settings (seniority + question types) ride on the room
+    // metadata field of the JWT-signed RoomConfiguration. The Python agent
+    // reads them from `ctx.room.metadata` after `ctx.connect()`.
+    //
+    // `parseInterviewSettings` is defensive — it always returns a valid
+    // shape (falling back to defaults for missing/bad fields) so the agent
+    // never sees malformed JSON or unknown enums.
+    const interviewSettings = parseInterviewSettings(body?.interview_settings);
+    roomConfig.metadata = JSON.stringify(interviewSettings);
 
     // Generate participant token
     const participantName = 'user';

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useSessionContext, useSessionMessages } from '@livekit/components-react';
+import { useInterviewSettings } from '@/components/app/interview-settings-context';
 import type {
   ClassifyTurnResponse,
   CoachErrorCode,
@@ -15,6 +16,7 @@ import type {
   FrameworkId,
 } from '@/lib/coach-types';
 import { getFramework } from '@/lib/frameworks';
+import type { SeniorityId } from '@/lib/interview-settings';
 
 /**
  * Watches the LiveKit session transcript and orchestrates three parallel
@@ -130,13 +132,14 @@ function buildPrior(state: CoachState): CoachPrior {
 async function fetchSupport(
   recentTranscript: string,
   prior: CoachPrior | undefined,
+  seniority: SeniorityId | undefined,
   signal: AbortSignal
 ): Promise<CoachResponse | null> {
   try {
     const res = await fetch('/api/support', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recent_transcript: recentTranscript, prior }),
+      body: JSON.stringify({ recent_transcript: recentTranscript, prior, seniority }),
       signal,
     });
     return (await res.json()) as CoachResponse;
@@ -191,6 +194,10 @@ async function fetchClassify(
 export function useSupportCues() {
   const { messages } = useSessionMessages();
   const { isConnected } = useSessionContext();
+  // Pull seniority from the settings context so the coach prompt can
+  // calibrate cue-ticking strictness. `getSettings()` reads from a ref so
+  // its identity is stable across renders — safe to read in `orchestrate`.
+  const { getSettings } = useInterviewSettings();
 
   const [state, setState] = useState<CoachState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -292,13 +299,24 @@ export function useSupportCues() {
       // misleadingly while the new ones are fetched.
       pendingFeedbackRef.current = null;
 
+      // Read seniority from settings context once per turn — passed to
+      // /api/support so the coach prompt can calibrate cue strictness.
+      const seniority = getSettings().seniority;
+
       console.log(
         '[support] firing parallel calls (support/feedback/classify), prior=',
-        initialPrior?.framework_id ?? 'none'
+        initialPrior?.framework_id ?? 'none',
+        'seniority=',
+        seniority
       );
 
       // Fire all three in parallel.
-      const supportPromise = fetchSupport(recentTranscript, initialPrior, controller.signal);
+      const supportPromise = fetchSupport(
+        recentTranscript,
+        initialPrior,
+        seniority,
+        controller.signal
+      );
       const feedbackPromise = fetchFeedback(recentTranscript, controller.signal);
       const classifyPromise = fetchClassify(
         recentTranscript,
@@ -372,7 +390,12 @@ export function useSupportCues() {
       pendingFeedbackRef.current = [];
       setIsLoading(true); // pending dot on the (still-visible) old framework
 
-      const freshResult = await fetchSupport(recentTranscript, undefined, controller.signal);
+      const freshResult = await fetchSupport(
+        recentTranscript,
+        undefined,
+        seniority,
+        controller.signal
+      );
       if (controller.signal.aborted) return;
       if (!freshResult || !freshResult.ok) {
         console.warn('[support] re-fetch after new-question failed — keeping old framework');

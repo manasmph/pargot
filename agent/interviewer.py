@@ -7,6 +7,12 @@ from livekit.agents import Agent, AgentSession, RoomInputOptions
 from livekit.plugins import google
 
 from prompts import INTERVIEWER_SYSTEM_PROMPT
+from settings import (
+    InterviewSettings,
+    build_opener,
+    build_seniority_calibration,
+    parse_room_settings,
+)
 
 load_dotenv()
 
@@ -45,19 +51,21 @@ if _model_key not in MODELS:
 SELECTED_MODEL = MODELS[_model_key]
 logger.info("Using interviewer model: %s  →  %s", _model_key, SELECTED_MODEL)
 
-# Opening instruction sent to kick off the interview
-_OPENER = (
-    "Greet the candidate warmly. Introduce yourself as Alex, a senior PM. "
-    "Tell them this will be a ~30-minute mock PM interview. "
-    "Then pick ONE interview type at random from: product design, product improvement, "
-    "estimation, root cause analysis, behavioral, or strategy. "
-    "Ask your opening question clearly and concisely. Do not reveal the interview type."
-)
-
-
 class PMInterviewer(Agent):
-    def __init__(self) -> None:
-        super().__init__(instructions=INTERVIEWER_SYSTEM_PROMPT)
+    """
+    Per-session interviewer agent. Receives the parsed interview settings
+    so the system prompt can be calibrated to the candidate's seniority
+    (depth expected, follow-up tolerance, etc.).
+    """
+
+    def __init__(self, settings: InterviewSettings) -> None:
+        self._settings = settings
+        self._opener = build_opener(settings)
+        calibration = build_seniority_calibration(settings)
+        prompt = INTERVIEWER_SYSTEM_PROMPT
+        if calibration:
+            prompt = f"{INTERVIEWER_SYSTEM_PROMPT}\n\n{calibration}"
+        super().__init__(instructions=prompt)
 
     async def on_enter(self) -> None:
         """
@@ -80,7 +88,7 @@ class PMInterviewer(Agent):
                 #   await gemini_session.send_realtime_input(text=…)
                 # which is the approved mid-session text path for 3.1.
                 rt._send_client_event(
-                    genai_types.LiveClientRealtimeInput(text=_OPENER)
+                    genai_types.LiveClientRealtimeInput(text=self._opener)
                 )
             except Exception:
                 logger.exception("gemini-3.1: failed to trigger opener via on_enter")
@@ -118,11 +126,18 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     logger.info("Connecting to room %s (model: %s)", ctx.room.name, _model_key)
     await ctx.connect()
 
+    # Pre-interview settings ride on the JWT-signed RoomConfiguration.metadata
+    # set by /api/token. parse_room_settings is defensive — it always returns
+    # a valid InterviewSettings, falling back to defaults on bad shape.
+    settings = parse_room_settings(ctx.room.metadata)
+    logger.info("Interview settings: %s", settings)
+
+    interviewer = PMInterviewer(settings)
     session = AgentSession(llm=_build_realtime_model())
 
     await session.start(
         room=ctx.room,
-        agent=PMInterviewer(),
+        agent=interviewer,
         room_input_options=RoomInputOptions(),
     )
 
@@ -130,7 +145,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # gemini-3.1: opener is sent inside PMInterviewer.on_enter() instead, because
     #             generate_reply() is blocked (mutable_chat_context=False).
     if _model_key == "gemini-2.5":
-        await session.generate_reply(instructions=_OPENER)
+        await session.generate_reply(instructions=interviewer._opener)
 
 
 def main() -> None:
