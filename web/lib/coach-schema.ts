@@ -56,3 +56,25 @@ export const ClassifyTurnPayloadSchema = z.object({
   confidence: z.number().min(0).max(1),
   reason: z.string().optional(),
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 4 — /api/summary
+// ─────────────────────────────────────────────────────────────────────────
+
+const SummaryFindingSchema = z.object({
+  title: z.string().min(1).max(80),
+  detail: z.string().min(1).max(300),
+});
+
+export const InterviewSummarySchema = z.object({
+  overall_score: z.number().min(1).max(10),
+  overall_assessment: z.string().min(1).max(500),
+  framework_used: z.string().min(1).max(80),
+  stages_completed: z.number().int().min(0),
+  stages_total: z.number().int().min(1),
+  strengths: z.array(SummaryFindingSchema).min(1).max(5),
+  improvements: z.array(SummaryFindingSchema).min(1).max(5),
+  next_steps: z.array(z.string().min(1).max(200)).min(1).max(5),
+});
+
+export type InterviewSummaryValidated = z.infer<typeof InterviewSummarySchema>;

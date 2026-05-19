@@ -124,6 +124,39 @@ export type CoachResponse =
   | { ok: false; code: CoachErrorCode; warning: string };
 
 // ─────────────────────────────────────────────────────────────────────────
+// Interview summary — generated once at end-of-session by /api/summary
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface SummaryFinding {
+  /** Short headline (≤6 words). */
+  title: string;
+  /** One-sentence elaboration. */
+  detail: string;
+}
+
+export interface InterviewSummary {
+  /** Overall score on a 1–10 scale. */
+  overall_score: number;
+  /** 2-3 sentence holistic assessment. */
+  overall_assessment: string;
+  /** Which framework the candidate was working in (display name). */
+  framework_used: string;
+  /** How many stages were completed vs total. */
+  stages_completed: number;
+  stages_total: number;
+  /** 3-5 things that went well. */
+  strengths: SummaryFinding[];
+  /** 3-5 things to work on. */
+  improvements: SummaryFinding[];
+  /** Concrete, actionable practice suggestions (3-5 items). */
+  next_steps: string[];
+}
+
+export type SummaryResponse =
+  | { ok: true; summary: InterviewSummary }
+  | { ok: false; warning: string };
+
+// ─────────────────────────────────────────────────────────────────────────
 // Phase 3.3 — /api/feedback
 // ─────────────────────────────────────────────────────────────────────────
 

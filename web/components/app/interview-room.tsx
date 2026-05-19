@@ -1,22 +1,31 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTheme } from 'next-themes';
 import { AnimatePresence, motion } from 'motion/react';
+import { toast } from 'sonner';
 import { useSessionContext } from '@livekit/components-react';
 import type { AppConfig } from '@/app-config';
 import { AgentSessionView_01 } from '@/components/agents-ui/blocks/agent-session-view-01';
 import { ConnectingView, type StepStatus } from '@/components/app/connecting-view';
 import { useInterviewSettings } from '@/components/app/interview-settings-context';
 import { SettingsView } from '@/components/app/settings-view';
+import { SummaryView } from '@/components/app/summary-view';
 import { SupportPanel } from '@/components/app/support-panel';
 import { WelcomeView } from '@/components/app/welcome-view';
+import { useInterviewSummary } from '@/hooks/use-interview-summary';
 import { useSupportCues } from '@/hooks/use-support-cues';
 import { DEFAULT_INTERVIEW_SETTINGS, type InterviewSettings } from '@/lib/interview-settings';
 
 const MotionWelcomeView = motion.create(WelcomeView);
 const MotionSettingsView = motion.create(SettingsView);
 const MotionConnectingView = motion.create(ConnectingView);
+const MotionSummaryView = motion.create(SummaryView);
+
+// 30-minute hard cap on a session, with a 5-min-remaining warning.
+// Matches the "~30-minute mock PM interview" framing in the agent's opener.
+const SESSION_LIMIT_MS = 30 * 60 * 1000;
+const SESSION_WARNING_MS = 25 * 60 * 1000;
 
 const VIEW_MOTION_PROPS = {
   variants: {
@@ -34,24 +43,37 @@ interface InterviewRoomProps {
 }
 
 export function InterviewRoom({ appConfig }: InterviewRoomProps) {
-  const { isConnected, start } = useSessionContext();
+  const { isConnected, start, end } = useSessionContext();
   const { resolvedTheme } = useTheme();
   const { state, isLoading, error, errorCode, isPartial } = useSupportCues();
   const { settings, applySettings } = useInterviewSettings();
+  const { state: summaryState, reset: resetSummary } = useInterviewSummary({ coachState: state });
 
-  // ── Pre-interview state ─────────────────────────────────────────────────
-  // The view machine grows a 'settings' step between welcome and connecting:
-  //   welcome → settings → connecting → connected
+  // ── View state machine ─────────────────────────────────────────────────
+  //   welcome → settings → connecting → connected → summary → welcome
   //
-  // `wantsSettings` flips true when the user clicks Start on the welcome
-  // page; `isStarting` flips true when they confirm the settings page and
-  // we kick off the LiveKit handshake.
+  // `wantsSettings`  : user clicked Start on welcome, settings page showing.
+  // `isStarting`     : user confirmed settings, LiveKit handshake in flight.
+  // `showSummary`    : session has just ended (manually or via auto-end);
+  //                    SummaryView is rendered until user clicks "Start new".
   const [wantsSettings, setWantsSettings] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
   const [coachHealth, setCoachHealth] = useState<StepStatus>('pending');
   const [coachError, setCoachError] = useState<string | undefined>(undefined);
 
-  // Once LiveKit reports connected, leave the connecting view.
+  // Detect connected → disconnected transition to flip into summary view.
+  // We only set `showSummary` on the falling edge; staying-false (idle) or
+  // staying-true (mid-session) is a no-op.
+  const wasConnectedRef = useRef(false);
+  useEffect(() => {
+    if (wasConnectedRef.current && !isConnected) {
+      setShowSummary(true);
+    }
+    wasConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  // Leave the connecting view once LiveKit reports connected.
   useEffect(() => {
     if (isConnected) {
       setIsStarting(false);
@@ -59,14 +81,39 @@ export function InterviewRoom({ appConfig }: InterviewRoomProps) {
     }
   }, [isConnected]);
 
-  // Reset the loader state whenever we drop back to the welcome screen
-  // (e.g. user ended the interview and is starting a new one).
+  // Reset the loader state whenever we drop back to the welcome screen.
   useEffect(() => {
-    if (!isConnected && !isStarting && !wantsSettings) {
+    if (!isConnected && !isStarting && !wantsSettings && !showSummary) {
       setCoachHealth('pending');
       setCoachError(undefined);
     }
-  }, [isConnected, isStarting, wantsSettings]);
+  }, [isConnected, isStarting, wantsSettings, showSummary]);
+
+  // ── 30-minute session limit ────────────────────────────────────────────
+  // Mounts a pair of timers when the session goes live: a soft 5-min-
+  // remaining toast and a hard auto-end at 30 min. The agent's opener
+  // tells the candidate "~30-minute mock PM interview" so this enforces it.
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const warningId = window.setTimeout(() => {
+      toast.warning('5 minutes left in your interview', {
+        description: 'Wrap up your final answer — the summary appears when time is up.',
+        duration: 8000,
+      });
+    }, SESSION_WARNING_MS);
+
+    const limitId = window.setTimeout(() => {
+      console.log('[interview-room] 30-min session limit reached — auto-ending');
+      toast.info("Time's up — generating your summary…", { duration: 4000 });
+      void end();
+    }, SESSION_LIMIT_MS);
+
+    return () => {
+      window.clearTimeout(warningId);
+      window.clearTimeout(limitId);
+    };
+  }, [isConnected, end]);
 
   // ── Welcome → settings ─────────────────────────────────────────────────
   const handleWelcomeStart = useCallback(() => {
@@ -114,13 +161,21 @@ export function InterviewRoom({ appConfig }: InterviewRoomProps) {
     setWantsSettings(false);
   }, []);
 
-  const view: 'welcome' | 'settings' | 'connecting' | 'connected' = isConnected
-    ? 'connected'
-    : isStarting
-      ? 'connecting'
-      : wantsSettings
-        ? 'settings'
-        : 'welcome';
+  // ── Summary → welcome ──────────────────────────────────────────────────
+  const handleStartNew = useCallback(() => {
+    setShowSummary(false);
+    resetSummary();
+  }, [resetSummary]);
+
+  const view: 'welcome' | 'settings' | 'connecting' | 'connected' | 'summary' = showSummary
+    ? 'summary'
+    : isConnected
+      ? 'connected'
+      : isStarting
+        ? 'connecting'
+        : wantsSettings
+          ? 'settings'
+          : 'welcome';
 
   return (
     <AnimatePresence mode="wait">
@@ -158,9 +213,6 @@ export function InterviewRoom({ appConfig }: InterviewRoomProps) {
           {...VIEW_MOTION_PROPS}
           className="fixed inset-0 flex flex-col md:flex-row"
         >
-          {/* Agent visualizer + mic controls.
-              Mobile (column layout): top section, ~40% height.
-              Desktop (row layout): left column, ~60% width. */}
           <AgentSessionView_01
             className="min-h-0 min-w-0 flex-[2] md:flex-[3]"
             supportsChatInput={appConfig.supportsChatInput}
@@ -182,9 +234,6 @@ export function InterviewRoom({ appConfig }: InterviewRoomProps) {
             audioVisualizerWaveLineWidth={appConfig.audioVisualizerWaveLineWidth}
           />
 
-          {/* Support panel.
-              Mobile: bottom section, ~60% height — scrolls internally.
-              Desktop: right column, 280-420px wide. */}
           <SupportPanel
             state={state}
             isLoading={isLoading}
@@ -194,6 +243,15 @@ export function InterviewRoom({ appConfig }: InterviewRoomProps) {
             className="min-h-0 flex-[3] md:max-w-[420px] md:min-w-[280px] md:flex-[2]"
           />
         </motion.div>
+      )}
+
+      {view === 'summary' && (
+        <MotionSummaryView
+          key="summary"
+          {...VIEW_MOTION_PROPS}
+          state={summaryState}
+          onStartNew={handleStartNew}
+        />
       )}
     </AnimatePresence>
   );
