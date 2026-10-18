@@ -5,8 +5,8 @@
 # Build context is the agent/ folder, so `COPY .` only pulls the agent
 # source (no Next.js bloat from web/).
 #
-# Build:   docker build -t socratiq-agent ./agent
-# Run:     docker run --env-file agent/.env socratiq-agent
+# Build:   docker build -t pargot-agent ./agent
+# Run:     docker run --env-file agent/.env pargot-agent
 # Railway: detected automatically when Root Directory is "agent".
 # ---------------------------------------------------------------------------
 

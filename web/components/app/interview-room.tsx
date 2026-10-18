@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { signIn } from 'next-auth/react';
 import { useTheme } from 'next-themes';
 import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
@@ -8,6 +9,7 @@ import { useSessionContext } from '@livekit/components-react';
 import type { AppConfig } from '@/app-config';
 import { AgentSessionView_01 } from '@/components/agents-ui/blocks/agent-session-view-01';
 import { ConnectingView, type StepStatus } from '@/components/app/connecting-view';
+import { DailyLimitView } from '@/components/app/daily-limit-view';
 import { useInterviewSettings } from '@/components/app/interview-settings-context';
 import { SettingsView } from '@/components/app/settings-view';
 import { SummaryView } from '@/components/app/summary-view';
@@ -15,12 +17,18 @@ import { SupportPanel } from '@/components/app/support-panel';
 import { WelcomeView } from '@/components/app/welcome-view';
 import { useInterviewSummary } from '@/hooks/use-interview-summary';
 import { useSupportCues } from '@/hooks/use-support-cues';
+import { AUTH_ENABLED } from '@/lib/auth-config';
 import { DEFAULT_INTERVIEW_SETTINGS, type InterviewSettings } from '@/lib/interview-settings';
 
 const MotionWelcomeView = motion.create(WelcomeView);
 const MotionSettingsView = motion.create(SettingsView);
 const MotionConnectingView = motion.create(ConnectingView);
 const MotionSummaryView = motion.create(SummaryView);
+const MotionDailyLimitView = motion.create(DailyLimitView);
+
+// Keep in sync with DAILY_INTERVIEW_LIMIT server-side. Display-only — the
+// server is the source of truth; this just labels the limit screen.
+const DAILY_LIMIT_DISPLAY = Number(process.env.NEXT_PUBLIC_DAILY_INTERVIEW_LIMIT ?? 3);
 
 // 30-minute hard cap on a session, with a 5-min-remaining warning.
 // Matches the "~30-minute mock PM interview" framing in the agent's opener.
@@ -59,6 +67,7 @@ export function InterviewRoom({ appConfig }: InterviewRoomProps) {
   const [wantsSettings, setWantsSettings] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
+  const [limitReached, setLimitReached] = useState(false);
   const [coachHealth, setCoachHealth] = useState<StepStatus>('pending');
   const [coachError, setCoachError] = useState<string | undefined>(undefined);
 
@@ -133,6 +142,20 @@ export function InterviewRoom({ appConfig }: InterviewRoomProps) {
       setCoachError(undefined);
 
       Promise.resolve(start()).catch((err: unknown) => {
+        const msg = (err as Error)?.message ?? '';
+        // Quota exhausted → dedicated limit screen instead of a generic error.
+        if (msg.includes('daily_limit')) {
+          setLimitReached(true);
+          setIsStarting(false);
+          return;
+        }
+        // Not signed in (auth mode only) → kick off Google sign-in.
+        if (msg.includes('unauthorized')) {
+          setIsStarting(false);
+          setWantsSettings(false);
+          if (AUTH_ENABLED) void signIn('google');
+          return;
+        }
         console.error('[interview-room] LiveKit connect failed:', err);
         setIsStarting(false);
       });
@@ -161,21 +184,30 @@ export function InterviewRoom({ appConfig }: InterviewRoomProps) {
     setWantsSettings(false);
   }, []);
 
+  // ── Daily-limit screen → back to welcome ────────────────────────────────
+  const handleLimitBack = useCallback(() => {
+    setLimitReached(false);
+    setWantsSettings(false);
+  }, []);
+
   // ── Summary → welcome ──────────────────────────────────────────────────
   const handleStartNew = useCallback(() => {
     setShowSummary(false);
     resetSummary();
   }, [resetSummary]);
 
-  const view: 'welcome' | 'settings' | 'connecting' | 'connected' | 'summary' = showSummary
-    ? 'summary'
-    : isConnected
-      ? 'connected'
-      : isStarting
-        ? 'connecting'
-        : wantsSettings
-          ? 'settings'
-          : 'welcome';
+  const view: 'welcome' | 'settings' | 'connecting' | 'connected' | 'summary' | 'limit' =
+    showSummary
+      ? 'summary'
+      : isConnected
+        ? 'connected'
+        : limitReached
+          ? 'limit'
+          : isStarting
+            ? 'connecting'
+            : wantsSettings
+              ? 'settings'
+              : 'welcome';
 
   return (
     <AnimatePresence mode="wait">
@@ -251,6 +283,15 @@ export function InterviewRoom({ appConfig }: InterviewRoomProps) {
           {...VIEW_MOTION_PROPS}
           state={summaryState}
           onStartNew={handleStartNew}
+        />
+      )}
+
+      {view === 'limit' && (
+        <MotionDailyLimitView
+          key="limit"
+          {...VIEW_MOTION_PROPS}
+          limit={DAILY_LIMIT_DISPLAY}
+          onBack={handleLimitBack}
         />
       )}
     </AnimatePresence>

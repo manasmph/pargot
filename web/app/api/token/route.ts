@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { AccessToken, type AccessTokenOptions, type VideoGrant } from 'livekit-server-sdk';
 import { RoomConfiguration } from '@livekit/protocol';
+import { auth } from '@/auth';
+import { AUTH_ENABLED } from '@/lib/auth-config';
 import { parseInterviewSettings } from '@/lib/interview-settings';
+import { DAILY_INTERVIEW_LIMIT, getTodayInterviewCount } from '@/lib/usage';
 
 type ConnectionDetails = {
   serverUrl: string;
@@ -15,22 +18,35 @@ const API_KEY = process.env.LIVEKIT_API_KEY;
 const API_SECRET = process.env.LIVEKIT_API_SECRET;
 const LIVEKIT_URL = process.env.LIVEKIT_URL;
 
+export const runtime = 'nodejs';
 // don't cache the results
 export const revalidate = 0;
 
 export async function POST(req: Request) {
-  // ⚠ SECURITY NOTE
-  // This endpoint mints a LiveKit JWT for *any* caller. Anyone with the URL
-  // can join voice rooms and burn LiveKit quota — there is no auth gate.
-  //
-  // For SocratiQ's current hobby deploy this is acceptable (free-tier LiveKit
-  // caps abuse damage at 25,000 minutes/month, and the room is single-user
-  // anyway). Before any serious launch, wrap this in NextAuth / Clerk /
-  // a shared bearer secret and re-enable the production guard:
-  //
-  //   if (process.env.NODE_ENV !== 'development' && !isAuthenticated(req)) {
-  //     return new Response('Unauthorized', { status: 401 });
-  //   }
+  // ── Auth + quota gate ────────────────────────────────────────────────────
+  // This is the enforcement point. Minting a LiveKit JWT is what lets a
+  // caller burn voice minutes, so when auth is enabled we require a signed-in
+  // user and refuse once they hit their daily interview quota. When auth is
+  // disabled (default / local), the endpoint is open — intended for a
+  // bring-your-own-key laptop install behind no public URL.
+  if (AUTH_ENABLED) {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    }
+    try {
+      const used = await getTodayInterviewCount(session.user.id);
+      if (used >= DAILY_INTERVIEW_LIMIT) {
+        return NextResponse.json(
+          { error: 'daily_limit', limit: DAILY_INTERVIEW_LIMIT, used },
+          { status: 429 }
+        );
+      }
+    } catch (err) {
+      // A quota-check failure shouldn't hard-block the interview; log and allow.
+      console.error('[token-api] quota check failed (allowing):', err);
+    }
+  }
 
   try {
     if (LIVEKIT_URL === undefined) {

@@ -17,7 +17,7 @@ import json
 import logging
 from typing import TypedDict
 
-logger = logging.getLogger("socratiq.settings")
+logger = logging.getLogger("pargot.settings")
 
 SENIORITY_VALUES: set[str] = {"pm", "senior_pm", "staff_pm", "principal_pm"}
 

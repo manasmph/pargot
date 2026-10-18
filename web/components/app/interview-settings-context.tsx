@@ -16,7 +16,7 @@ import {
   parseInterviewSettings,
 } from '@/lib/interview-settings';
 
-const STORAGE_KEY = 'socratiq.settings';
+const STORAGE_KEY = 'pargot.settings';
 
 interface InterviewSettingsContextValue {
   /** Current settings — `null` until the user has confirmed the settings page. */

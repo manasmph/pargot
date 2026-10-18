@@ -1,6 +1,6 @@
 # Deployment Guide — Vercel + Railway
 
-Socratiq has two long-lived pieces that deploy independently:
+Pargot.ai has two long-lived pieces that deploy independently:
 
 ```
                         ┌─────────────────────────────┐
@@ -60,9 +60,9 @@ From the repo root:
 ```bash
 git init
 git add .
-git commit -m "Initial Socratiq commit"
+git commit -m "Initial Pargot.ai commit"
 git branch -M main
-git remote add origin https://github.com/<you>/socratiq.git
+git remote add origin https://github.com/<you>/pargot.git
 git push -u origin main
 ```
 
@@ -82,11 +82,8 @@ The worker should be online **before** the frontend, so when a user clicks Start
 2. Railway opens the project. Click into the auto-created service → **Settings**.
 3. **Root Directory**: `agent`
    This tells Railway to treat `agent/` as the build root.
-4. **Build**: leave on **Nixpacks** (the default). Nixpacks auto-detects Python from `agent/pyproject.toml`, runs `pip install -e .`, and uses the Procfile to start.
-5. **Start Command**: leave blank — Railway reads `agent/Procfile`:
-   ```
-   worker: python interviewer.py start
-   ```
+4. **Build**: Railway detects `agent/Dockerfile` and builds the image from it automatically.
+5. **Start Command**: leave blank — the Dockerfile runs `python interviewer.py start`.
    (`start` is LiveKit's production mode. `dev` is for local development only and watches files.)
 6. **Variables** tab → add all four:
 
@@ -101,7 +98,7 @@ The worker should be online **before** the frontend, so when a user clicks Start
 7. **Networking**: the worker does **not** expose an HTTP port. It's a pure outbound WebSocket consumer. Leave the public domain disabled.
 8. **Deploy**. Once the build finishes, open the **Deploy Logs** tab. You should see something like:
    ```
-   INFO socratiq.interviewer Using interviewer model: gemini-2.5  →  gemini-2.5-flash-native-audio-preview-12-2025
+   INFO pargot.interviewer Using interviewer model: gemini-2.5  →  gemini-2.5-flash-native-audio-preview-12-2025
    INFO livekit.agents starting worker {"version": "1.5.x", ...}
    INFO livekit.agents registered worker {"id": "AW_xxx", "region": "us-east"}
    ```
@@ -111,10 +108,9 @@ The worker should be online **before** the frontend, so when a user clicks Start
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `ModuleNotFoundError: livekit` | Nixpacks didn't install deps | Verify Root Directory = `agent` (so it sees `pyproject.toml`) |
+| `ModuleNotFoundError: livekit` | Railway didn't use the Dockerfile | Verify Root Directory = `agent` (so it sees `agent/Dockerfile`) |
 | Worker logs `INVALID_ARGUMENT: API key not valid` | Wrong `GOOGLE_API_KEY` | Re-copy from aistudio.google.com |
 | Worker logs nothing after `starting worker` | Wrong `LIVEKIT_URL` (e.g. `https://` instead of `wss://`) | Use the URL exactly as shown in LiveKit Cloud Settings |
-| `Crashed` immediately | Python version mismatch | Add `agent/runtime.txt` containing `python-3.11` |
 
 ---
 
@@ -135,9 +131,23 @@ The worker should be online **before** the frontend, so when a user clicks Start
    | `LIVEKIT_API_SECRET` | `secret-xxx…` | same as Railway |
    | `GOOGLE_API_KEY` | `AIza…` | same as Railway |
 
+   Optionally add `GROQ_API_KEY` for a faster coach.
+
+   **Public deployment? Turn on auth mode.** Without it, `/api/token` is open and anyone with the URL can spend your LiveKit + Gemini quota. Add:
+
+   | Key | Value |
+   |---|---|
+   | `NEXT_PUBLIC_AUTH_ENABLED` | `true` |
+   | `AUTH_SECRET` | output of `npx auth secret` |
+   | `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | Google OAuth client; add `https://<your-domain>/api/auth/callback/google` as a redirect URI |
+   | `DATABASE_URL` | Neon pooled connection string (free tier) |
+   | `DAILY_INTERVIEW_LIMIT` / `NEXT_PUBLIC_DAILY_INTERVIEW_LIMIT` | e.g. `3` |
+
+   Run `pnpm db:push` once (locally, pointed at the same `DATABASE_URL`) to create the tables.
+
    Apply to **Production, Preview, and Development** environments.
 7. Click **Deploy**. First build takes ~2 minutes.
-8. Vercel gives you a URL like `socratiq-xxx.vercel.app`. Open it.
+8. Vercel gives you a URL like `pargot-xxx.vercel.app`. Open it.
 
 ### Verifying the deploy
 
@@ -166,7 +176,7 @@ If you see the welcome page render and the loader transition to the interview vi
 2. Click Start on each. Both should connect within ~3s and Alex should greet you.
 3. Watch the Railway logs while a session is live — you should see:
    ```
-   INFO socratiq.interviewer Connecting to room <random-room-id>
+   INFO pargot.interviewer Connecting to room <random-room-id>
    ```
 4. On Vercel: **Functions** tab → `/api/support` invocations should show ~200ms response times.
 
@@ -225,7 +235,5 @@ You upload the agent code, LiveKit runs it adjacent to their SFU (lowest latency
 ## What's NOT covered here
 
 - Custom domain (Vercel: Settings → Domains; Railway: Networking tab)
-- Authentication / user accounts (out of scope for v1)
-- Persistence — current build is fully in-memory. Sessions end, panels reset.
 - Multi-tenant LiveKit (separate projects per customer)
 - CI/CD pipelines beyond the default GitHub auto-deploy

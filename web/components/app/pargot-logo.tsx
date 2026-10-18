@@ -1,35 +1,35 @@
 import { cn } from '@/lib/shadcn/utils';
 
-interface SocratiqLogoProps {
+interface PargotLogoProps {
   className?: string;
   /** When true, render only the icon (no wordmark). */
   iconOnly?: boolean;
 }
 
 /**
- * Socratiq brand mark — custom logo paired with the wordmark.
+ * Pargot brand mark — custom logo paired with the wordmark.
  * Single-colour, uses `currentColor`, so it inherits the parent's
  * text colour for theming.
  */
-export function SocratiqLogo({ className, iconOnly = false }: SocratiqLogoProps) {
+export function PargotLogo({ className, iconOnly = false }: PargotLogoProps) {
   return (
     <span className={cn('text-foreground inline-flex items-center gap-2', className)}>
-      <SocratiqIcon className="h-8 w-auto" />
+      <PargotIcon className="h-8 w-auto" />
       {!iconOnly && (
-        <span className="text-[1.1em] leading-none font-semibold tracking-tight">SocratiQ</span>
+        <span className="text-[1.1em] leading-none font-semibold tracking-tight">Pargot.ai</span>
       )}
     </span>
   );
 }
 
 /**
- * The Socratiq glyph on its own. Source SVG is preserved verbatim from
+ * The Pargot glyph on its own. Source SVG is preserved verbatim from
  * `app/icon.svg` (the favicon source). Uses `currentColor` so the
  * surrounding `text-{color}` utility paints it. ViewBox is portrait
  * (211 × 369) — when sizing this component use `h-N w-auto` so the
  * aspect ratio is preserved.
  */
-export function SocratiqIcon({ className }: { className?: string }) {
+export function PargotIcon({ className }: { className?: string }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"

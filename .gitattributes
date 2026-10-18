@@ -1,0 +1,9 @@
+# Normalize to LF everywhere, including Windows checkouts. Prettier (run by
+# `next build`'s lint step) rejects CRLF, so without this a fresh clone on
+# Windows with core.autocrlf=true fails to build.
+* text=auto eol=lf
+
+*.otf binary
+*.png binary
+*.webp binary
+*.ico binary

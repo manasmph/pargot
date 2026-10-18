@@ -1,7 +1,7 @@
 'use client';
 
 import { Check, Loader2, TriangleAlert } from 'lucide-react';
-import { SocratiqIcon } from '@/components/app/socratiq-logo';
+import { PargotIcon } from '@/components/app/pargot-logo';
 import { cn } from '@/lib/shadcn/utils';
 
 export type StepStatus = 'pending' | 'ok' | 'error';
@@ -31,7 +31,7 @@ export const ConnectingView = ({
       className="bg-background flex min-h-svh w-full flex-col items-center justify-center px-4 py-6 sm:p-8"
     >
       <div className="flex flex-col items-center">
-        <SocratiqIcon className="text-foreground h-20 w-auto animate-pulse sm:h-24" />
+        <PargotIcon className="text-foreground h-20 w-auto animate-pulse sm:h-24" />
         <h2 className="text-foreground mt-6 text-xl font-semibold tracking-tight sm:mt-8 sm:text-2xl">
           Starting your interview…
         </h2>

@@ -11,7 +11,7 @@ export interface AppConfig {
   /**
    * Logo / logoDark paths are kept on the interface for backwards
    * compatibility (e.g., overrides via `<meta>` tags or the sandbox).
-   * The shipped UI renders the inline `<SocratiqLogo />` component
+   * The shipped UI renders the inline `<PargotLogo />` component
    * instead, so these are unused in the default config.
    */
   logo?: string;
@@ -40,8 +40,8 @@ export interface AppConfig {
 }
 
 export const APP_CONFIG_DEFAULTS: AppConfig = {
-  companyName: 'SocratiQ',
-  pageTitle: 'SocratiQ - PM Interview Practice',
+  companyName: 'Pargot.ai',
+  pageTitle: 'Pargot.ai - PM Interview Practice',
   pageDescription: 'Practice PM interviews with an AI interviewer and real-time coaching.',
 
   supportsChatInput: false,

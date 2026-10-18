@@ -14,8 +14,12 @@
  */
 import { GoogleGenAI, Type } from '@google/genai';
 import type { Schema } from '@google/genai';
+import { auth } from '@/auth';
+import { AUTH_ENABLED } from '@/lib/auth-config';
 import { InterviewSummarySchema } from '@/lib/coach-schema';
 import type { InterviewSummary, SummaryResponse } from '@/lib/coach-types';
+import { db } from '@/lib/db';
+import { interviews } from '@/lib/db/schema';
 import {
   QUESTION_TYPE_LABELS,
   type QuestionTypeId,
@@ -243,5 +247,33 @@ export async function POST(req: Request): Promise<Response> {
   console.log(
     `[summary-api] OK (${usedModel}) — score=${summary.overall_score}/10, ${summary.strengths.length} strengths, ${summary.improvements.length} improvements`
   );
+
+  // ── Persist to history (best-effort, only when auth is on) ────────────────
+  // Save the interview for the signed-in user. This is the row the daily
+  // quota counts and the History view lists. A DB failure here is non-fatal —
+  // the user still gets their summary; we just log the miss.
+  if (AUTH_ENABLED) {
+    try {
+      const session = await auth();
+      if (session?.user?.id) {
+        await db.insert(interviews).values({
+          userId: session.user.id,
+          frameworkId: body.final_state?.framework_id ?? null,
+          frameworkName: body.final_state?.framework_name ?? summary.framework_used,
+          questionType: body.final_state?.question_type ?? null,
+          seniority: seniority ?? null,
+          overallScore: summary.overall_score,
+          stagesCompleted: summary.stages_completed,
+          stagesTotal: summary.stages_total,
+          durationSec: body.duration_sec ?? null,
+          summary,
+        });
+        console.log(`[summary-api] saved to history for user ${session.user.id}`);
+      }
+    } catch (err) {
+      console.error('[summary-api] failed to persist interview (non-fatal):', err);
+    }
+  }
+
   return jsonResponse({ ok: true, summary });
 }

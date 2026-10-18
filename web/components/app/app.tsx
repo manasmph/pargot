@@ -67,6 +67,10 @@ function AppInner({ appConfig }: AppProps) {
         body: JSON.stringify({ interview_settings: settings }),
       });
       if (!res.ok) {
+        // Encode the failure kind in the error message so InterviewRoom's
+        // start().catch can branch: 429 → daily-limit screen, 401 → sign-in.
+        if (res.status === 429) throw new Error('daily_limit');
+        if (res.status === 401) throw new Error('unauthorized');
         throw new Error(`Token endpoint returned ${res.status}`);
       }
       return res.json();

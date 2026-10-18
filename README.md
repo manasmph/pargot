@@ -1,139 +1,163 @@
-# Socratiq — PM Mock Interview Platform
+# Pargot.ai
 
-Two cooperating AI agents:
+**Open-source PM mock interviews you can run on your own laptop.** Talk to a live AI voice interviewer while a real-time coach tracks your framework, ticks off what you've covered, and gives feedback after every answer — then get a scored summary at the end.
 
-1. **Interviewer** — A LiveKit voice agent (Gemini Live, native audio). Asks PM questions, fields clarifying questions, probes follow-ups, gives structured feedback.
-2. **Interview Coach** — A side-panel text agent (Gemini 2.5 Flash). Watches the live transcript and proactively suggests frameworks, clarifying questions to ask, answer structure, and pitfalls.
+- 🎙️ **Live voice interviewer** — "Alex", powered by Gemini Live native audio over LiveKit. Asks, clarifies, probes follow-ups.
+- 🧭 **Framework tracking** — 9 PM frameworks (CIRCLES, IMPROVE, STAR, AARRR, HEART, Issue Tree, Porter's…) with live stage progress.
+- 💡 **Real-time coaching cues + per-turn feedback** in a side panel, without pausing the interview.
+- 🎚️ **Interview settings** — seniority (PM → Group/Principal PM) and question types (design, improvement, estimation, root cause, behavioral, strategy).
+- 📊 **End-of-interview summary** — score, strengths, improvements, next steps. 30-minute session cap.
+- 🔐 **Optional auth mode** — Google sign-in, interview history, and daily quotas for hosted deployments. Off by default.
 
 ---
 
-## Requirements
+## Quick start (laptop)
 
-| Tool | Minimum version |
+### What you need
+
+| Tool | Version |
 |---|---|
-| Node.js | 18+ |
-| Python | 3.10+ |
+| Node.js | 20+ |
 | pnpm | 9+ (`npm i -g pnpm`) |
-| uv | 0.4+ (`pip install uv` or [docs](https://docs.astral.sh/uv/)) |
+| Python | 3.10+ |
+| uv | latest ([install](https://docs.astral.sh/uv/getting-started/installation/)) |
 
-You also need:
-- A **LiveKit Cloud** project → [cloud.livekit.io](https://cloud.livekit.io) (free tier works)
-- A **Google AI Studio** API key → [aistudio.google.com](https://aistudio.google.com/app/apikey)
+Plus two free API accounts:
 
----
+- **LiveKit Cloud** project — [cloud.livekit.io](https://cloud.livekit.io) → Settings → Keys (free tier is plenty)
+- **Google AI Studio** key — [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+- *(optional)* **Groq** key — [console.groq.com/keys](https://console.groq.com/keys) for a faster coach
 
-## Setup
+No database, no OAuth, no account system needed to run locally.
 
-### 1. Web frontend
+### 1. Clone
+
+```bash
+git clone https://github.com/<you>/pargot.git
+cd pargot
+```
+
+### 2. Voice agent
+
+```bash
+cd agent
+cp .env.example .env          # fill in LIVEKIT_* and GOOGLE_API_KEY
+uv venv
+uv pip install -r pyproject.toml
+```
+
+### 3. Web app
 
 ```bash
 cd web
-cp .env.local.example .env.local
-# Fill in LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, GOOGLE_API_KEY
+cp .env.example .env.local    # fill in LIVEKIT_* and GOOGLE_API_KEY (same values as the agent)
 pnpm install
 ```
 
-### 2. Agent worker
+### 4. Run (two terminals)
 
 ```bash
+# Terminal 1 — agent
 cd agent
-cp .env.example .env
-# Fill in LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, GOOGLE_API_KEY
-
-uv venv
-uv pip install -e .
-```
-
----
-
-## Running locally
-
-Open **two terminals**:
-
-```bash
-# Terminal 1 — Python agent worker
-cd agent
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate     # Windows: .venv\Scripts\activate
 python interviewer.py dev
 ```
 
 ```bash
-# Terminal 2 — Next.js frontend
+# Terminal 2 — web
 cd web
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), click **Start interview**, allow microphone access.
+Open <http://localhost:3000>, click **Start interview**, pick your settings, and allow microphone access.
+
+> **Tip:** if you see `ModuleNotFoundError: No module named 'google.genai'`, you're running the system Python — activate `agent/.venv` first.
 
 ---
 
 ## How it works
 
 ```
-Browser (Next.js)
-  ├─ Left panel  →  LiveKit room (voice in/out + transcript)
-  └─ Right panel →  Interview Coach (streams cues from Gemini Flash)
-         ↑
-  /api/support route
-         ↑ POST { transcript }
-  Gemini 2.5 Flash (google-genai SDK)
-
-LiveKit Cloud
-  └─ dispatches job → Python agent worker
-         └─ google.beta.realtime.RealtimeModel
-               └─ gemini-2.5-flash-native-audio-preview-12-2025
+Browser (Next.js, web/)
+  ├─ Voice room ───────────► LiveKit Cloud ──dispatch──► Python agent (agent/)
+  │                                                       └─ Gemini Live native audio ("Alex")
+  ├─ Coach panel ── /api/support, /api/feedback, /api/classify-turn
+  │                  └─ Groq gpt-oss-120b → Gemini Flash → Flash-Lite → Gemma (auto-fallback)
+  └─ Summary ────── /api/summary (Gemini 2.5 Flash)
 ```
 
-When you connect to the room, LiveKit dispatches a job to the Python worker. The worker creates an `AgentSession` with Gemini Live native audio and immediately greets you + asks a random PM interview question.
+- `/api/token` mints a LiveKit JWT and passes your interview settings to the agent via room metadata.
+- The coach routes walk a model chain. If a model is rate-limited or overloaded it's marked down and the next one becomes the default; recovery is probed in the background, never while you wait.
+- Frameworks live in a static catalog (`web/lib/frameworks.ts`); the model only emits IDs and flags, and the UI joins them.
 
-Every time the interviewer finishes speaking, the frontend posts the rolling transcript to `/api/support`. Gemini 2.5 Flash streams back coaching cues into the right panel within ~1–2 seconds.
-
----
-
-## Project structure
+### Project structure
 
 ```
-socratiq/
-├── agent/
-│   ├── interviewer.py        # LiveKit agent entrypoint
-│   ├── prompts.py            # Interviewer system prompt
-│   └── pyproject.toml
-└── web/
-    ├── app/
-    │   └── api/
-    │       ├── token/        # LiveKit JWT endpoint (from starter)
-    │       └── support/      # Gemini Flash streaming endpoint
-    ├── components/app/
-    │   ├── app.tsx           # Root component
-    │   ├── interview-room.tsx # Two-column layout
-    │   └── support-panel.tsx  # Coach side panel
-    ├── hooks/
-    │   └── use-support-cues.ts # Transcript → support AI hook
-    └── lib/
-        └── support-prompt.ts   # Coach system prompt
+pargot/
+├── agent/                    # Python LiveKit voice agent
+│   ├── interviewer.py        # entrypoint
+│   ├── prompts.py            # interviewer persona + question bank
+│   └── settings.py           # reads seniority / question types from room metadata
+├── web/                      # Next.js 15 app
+│   ├── app/api/              # token, support, feedback, classify-turn, summary, interviews, auth
+│   ├── components/app/       # interview room, coach panel, settings, summary, history
+│   ├── hooks/                # coach + summary hooks
+│   └── lib/                  # prompts, framework catalog, schemas, db, auth config
+└── docs/coach-roadmap.md     # coach design notes
 ```
 
 ---
 
-## Interview types
+## Auth mode (optional)
 
-The agent randomly selects one of:
-- Product design ("Design a product for…")
-- Product improvement ("How would you improve…")
-- Estimation / Market sizing
-- Root cause analysis ("DAU dropped 15%, investigate…")
-- Behavioral / Leadership
-- Strategy ("Should we enter market X?")
+By default Pargot.ai runs with **no sign-in, no database and no limits** — ideal for personal use on your own machine. Don't expose that mode on a public URL: anyone could mint LiveKit tokens and spend your API quota.
 
-Say **"I'm done"** or **"that's my answer"** to trigger structured feedback.
+For a public deployment, turn on auth mode in `web/.env.local`:
+
+```bash
+NEXT_PUBLIC_AUTH_ENABLED=true
+AUTH_SECRET=...            # npx auth secret
+AUTH_GOOGLE_ID=...         # Google OAuth client
+AUTH_GOOGLE_SECRET=...
+DATABASE_URL=...           # Postgres; Neon's free tier works well
+DAILY_INTERVIEW_LIMIT=3
+NEXT_PUBLIC_DAILY_INTERVIEW_LIMIT=3
+```
+
+Then create the tables:
+
+```bash
+cd web
+pnpm db:push
+```
+
+This adds Google sign-in, a per-user interview history page (`/history`), and a daily interview quota enforced in `/api/token`. Google OAuth redirect URI: `http://localhost:3000/api/auth/callback/google` (plus your production domain).
 
 ---
 
 ## Deployment
 
-To host the frontend on Vercel and the agent worker on Railway, see **[DEPLOY.md](./DEPLOY.md)** for step-by-step instructions, env-var checklists, and architecture notes.
+See **[DEPLOY.md](./DEPLOY.md)** — web on Vercel, agent on Railway (Docker), with env-var checklists.
 
-Quick summary:
-- **`web/`** → Vercel (Next.js auto-detected; set Root Directory to `web`)
-- **`agent/`** → Railway (Python auto-detected via `pyproject.toml`; reads `agent/Procfile` for the start command)
-- Both need the same four env vars: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `GOOGLE_API_KEY`
+---
+
+## Contributing
+
+Issues and PRs are welcome. Before opening a PR:
+
+```bash
+cd web
+pnpm lint
+pnpm format:check
+pnpm build
+```
+
+Never commit `.env`, `.env.local`, or any real keys — the `.gitignore` excludes them; the `*.example` files are the reference.
+
+---
+
+## License
+
+Pargot.ai is licensed under the **[GNU Affero General Public License v3.0](./LICENSE)**. If you run a modified version as a network service, you must make your source code available to its users.
+
+The web app began from LiveKit's [agent-starter-react](https://github.com/livekit-examples/agent-starter-react) template (MIT); its original notice is kept in [`web/LICENSE-LIVEKIT-STARTER`](./web/LICENSE-LIVEKIT-STARTER).

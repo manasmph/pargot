@@ -16,7 +16,7 @@ from settings import (
 
 load_dotenv()
 
-logger = logging.getLogger("socratiq.interviewer")
+logger = logging.getLogger("pargot.interviewer")
 
 # ---------------------------------------------------------------------------
 # Model configuration

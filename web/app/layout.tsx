@@ -3,9 +3,12 @@ import localFont from 'next/font/local';
 import { headers } from 'next/headers';
 import { Analytics } from '@vercel/analytics/next';
 import { SpeedInsights } from '@vercel/speed-insights/next';
-import { SocratiqLogo } from '@/components/app/socratiq-logo';
+import { AuthProvider } from '@/components/app/auth-provider';
+import { PargotLogo } from '@/components/app/pargot-logo';
 import { ThemeProvider } from '@/components/app/theme-provider';
 import { ThemeToggle } from '@/components/app/theme-toggle';
+import { UserMenu } from '@/components/app/user-menu';
+import { AUTH_ENABLED } from '@/lib/auth-config';
 import { cn } from '@/lib/shadcn/utils';
 import { getAppConfig, getStyles } from '@/lib/utils';
 import '@/styles/globals.css';
@@ -74,16 +77,19 @@ export default async function RootLayout({ children }: RootLayoutProps) {
           enableSystem
           disableTransitionOnChange
         >
-          <header className="fixed top-0 left-0 z-50 hidden w-full flex-row items-center justify-between px-4 py-3 sm:px-6 sm:py-4 md:flex">
-            <SocratiqLogo />
-          </header>
+          <AuthProvider>
+            <header className="fixed top-0 left-0 z-50 flex w-full flex-row items-center justify-between px-4 py-3 sm:px-6 sm:py-4">
+              <PargotLogo />
+              {AUTH_ENABLED && <UserMenu />}
+            </header>
 
-          {children}
-          {/* Theme toggle. On touch devices we always show it; on desktop it
-              slides up on hover so it doesn't crowd the centred CTA. */}
-          <div className="group fixed bottom-0 left-1/2 z-50 mb-2 -translate-x-1/2">
-            <ThemeToggle className="transition-transform delay-150 duration-300 md:translate-y-20 md:group-hover:translate-y-0" />
-          </div>
+            {children}
+            {/* Theme toggle. On touch devices we always show it; on desktop it
+                slides up on hover so it doesn't crowd the centred CTA. */}
+            <div className="group fixed bottom-0 left-1/2 z-50 mb-2 -translate-x-1/2">
+              <ThemeToggle className="transition-transform delay-150 duration-300 md:translate-y-20 md:group-hover:translate-y-0" />
+            </div>
+          </AuthProvider>
         </ThemeProvider>
 
         {/* Vercel Analytics — page views, referrers, custom events.

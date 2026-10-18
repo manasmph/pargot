@@ -1,8 +1,9 @@
 'use client';
 
 import { BookOpen, Compass, Mic, Sparkles, Target, Zap } from 'lucide-react';
-import { SocratiqIcon } from '@/components/app/socratiq-logo';
+import { PargotIcon } from '@/components/app/pargot-logo';
 import { Button } from '@/components/ui/button';
+import { AUTH_ENABLED } from '@/lib/auth-config';
 import { cn } from '@/lib/shadcn/utils';
 
 interface WelcomeViewProps {
@@ -49,8 +50,10 @@ const FEATURES: Feature[] = [
   },
   {
     icon: Zap,
-    title: 'No setup',
-    description: 'No accounts, no question banks, no fees. Mic in, feedback out.',
+    title: AUTH_ENABLED ? 'Track your progress' : 'No setup',
+    description: AUTH_ENABLED
+      ? 'Sign in with Google to save every interview and revisit your scores and feedback over time.'
+      : 'No accounts, no question banks, no fees. Mic in, feedback out.',
   },
 ];
 
@@ -63,10 +66,10 @@ export const WelcomeView = ({
     <div ref={ref} className="bg-background min-h-svh w-full overflow-y-auto">
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
       <section className="relative mx-auto flex max-w-3xl flex-col items-center px-4 pt-16 pb-10 text-center sm:px-6 sm:pt-24 md:pt-32 md:pb-12">
-        <SocratiqIcon className="text-foreground h-20 w-auto sm:h-24 md:h-28" />
+        <PargotIcon className="text-foreground h-20 w-auto sm:h-24 md:h-28" />
 
         <h1 className="text-foreground mt-5 text-4xl font-bold tracking-tight sm:text-5xl md:mt-6 md:text-6xl">
-          SocratiQ
+          Pargot.ai
         </h1>
 
         <p className="text-muted-foreground mt-3 max-w-xl text-sm leading-relaxed sm:text-base md:mt-4 md:text-lg">
@@ -83,7 +86,9 @@ export const WelcomeView = ({
         </Button>
 
         <p className="text-muted-foreground mt-3 text-xs">
-          ~30-minute mock interview · No signup required
+          {AUTH_ENABLED
+            ? '~30-minute mock interview · Google sign-in · free daily quota'
+            : '~30-minute mock interview · No signup required'}
         </p>
       </section>
 
